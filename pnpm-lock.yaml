@@ -354,10 +354,13 @@ importers:
       '@prisma/client':
         specifier: ^5.22.0
         version: 5.22.0(prisma@5.22.0)
-    devDependencies:
       '@sqlm/shared':
         specifier: workspace:*
         version: link:../shared
+      argon2:
+        specifier: ^0.41.1
+        version: 0.41.1
+    devDependencies:
       prisma:
         specifier: ^5.22.0
         version: 5.22.0
@@ -374,6 +377,12 @@ importers:
         specifier: ^3.24.1
         version: 3.25.76
     devDependencies:
+      '@types/node':
+        specifier: ^22.10.1
+        version: 22.20.4
+      tsx:
+        specifier: ^4.19.2
+        version: 4.23.15
       typescript:
         specifier: ^5.7.2
         version: 5.9.3

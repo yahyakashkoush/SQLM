@@ -5,3 +5,4 @@ export * from './enums/support';
 export * from './permissions';
 export * from './dto/common';
 export * from './dto/checkout';
+export * from './crypto/inventory-encryption';

@@ -8,7 +8,7 @@ the end of every phase instead.
 | # | Phase | Status |
 |---|---|---|
 | 1 | Repository audit + architecture foundation | ✅ done |
-| 2 | Database + Prisma + core domain models | pending |
+| 2 | Database + Prisma + core domain models | ✅ done |
 | 3 | Authentication + RBAC | pending |
 | 4 | Products + categories + inventory | pending |
 | 5 | Orders + checkout + order state machine | pending |
@@ -52,7 +52,7 @@ you can reach) — never LocalStack. See `docker-compose.yml` for details.
 **Verification (all green):**
 - `pnpm install` — clean, native build scripts (argon2, Prisma engines, esbuild) approved via `pnpm.onlyBuiltDependencies`.
 - `docker compose up -d` — Postgres, Redis, and S3-emulation containers healthy.
-- `pnpm db:generate` / `pnpm db:migrate` / `pnpm db:seed` — Prisma client generated, migration `20260925162306_init_placeholder` applied to live Postgres, seed runs.
+- `pnpm db:generate` / `pnpm db:migrate` / `pnpm db:seed` — Prisma client generated, placeholder migration applied to live Postgres, seed runs. (Superseded in Phase 2 by the real domain schema's `init` migration.)
 - `pnpm typecheck` — 10/10 packages.
 - `pnpm lint` — 10/10 packages, 0 errors/warnings.
 - `pnpm test` — unit tests pass.
@@ -62,3 +62,46 @@ you can reach) — never LocalStack. See `docker-compose.yml` for details.
 **Known non-blocking item:** `next lint` prints a Next.js 16 deprecation
 notice (still functions correctly on Next 15.5); no action needed until the
 Next 16 migration.
+
+## Phase 2 — Database + Prisma + core domain models ✅
+
+**Scope:** full domain schema in `packages/database/prisma/schema.prisma`
+(migration `20260925164308_init`): `Staff`/`StaffRefreshToken` (RBAC role is
+a fixed enum — `OWNER`/`ADMIN`/`PAYMENT_REVIEWER`/`SUPPORT_AGENT`/
+`DELIVERY_AGENT` — permission derivation stays in
+`packages/shared/src/permissions`, not a dynamic DB-backed permission
+system, since the spec's roles are a fixed set), `Customer`, `Category`
+(self-referencing for subcategories), `Product` (dynamic `deliveryType` /
+`fulfillmentType` / `inventoryMode` enums, `metadata` Json escape hatch —
+nothing product-specific is hardcoded), `InventoryItem` (encrypted payload,
+available count is always `COUNT(status = AVAILABLE)`, never a separate
+stored counter that could drift), `Order`/`OrderItem`/`OrderEvent` (product
+details snapshotted onto `OrderItem` at purchase time; `OrderEvent` is the
+append-only audit trail the state machine writes to in Phase 5),
+`PaymentMethod`/`PaymentProof`, `SupportTicket`/`TicketMessage`,
+`PlatformSetting` (key/value, admin-editable config), `AuditLog`,
+`TelegramUpdateLog` (second line of defense behind the Redis idempotency
+check for duplicate Telegram webhook deliveries). Money fields use
+`Decimal(12,2)`, not float. `Customer.telegramId` / `TelegramUpdateLog.updateId`
+use `BigInt` (Telegram IDs can exceed 32-bit range).
+
+Added `packages/shared/src/crypto/inventory-encryption.ts` — AES-256-GCM
+`encryptSecret`/`decryptSecret`, shared between the seed script and the
+Phase 4/9 inventory + delivery services so the wire format
+(`iv:authTag:data`, all base64) can't drift between writer and reader.
+
+Seed script (`packages/database/prisma/seed.ts`, idempotent — safe to
+re-run): one `OWNER` staff account, 3 example payment methods (Bank
+Transfer / Vodafone Cash / InstaPay, matching the spec's own examples), 3
+platform settings, and an illustrative category + 2 products (one
+`AUTOMATIC`/`INDIVIDUAL` with 2 real encrypted inventory items, one
+`MANUAL`/`QUANTITY`) — dev fixtures only, freely editable from the future
+Admin Dashboard; nothing in application code branches on them.
+
+**Verification (all green):**
+- `prisma format` / `prisma validate` — schema valid.
+- `prisma migrate reset --force` → `prisma migrate dev --name init` — clean apply to live Postgres.
+- `prisma migrate deploy` (the CI/production path, separate from `migrate dev`) — verified against a freshly reset database, 0 pending migrations after apply.
+- `pnpm db:seed` run twice — second run is a true no-op (upserts + existence checks), confirmed via row counts (`staff=1, payment_methods=3, platform_settings=3, categories=1, products=2, inventory_items=2`).
+- New unit tests for the encryption helper (`packages/shared`, Node's built-in test runner via `tsx --test`): round-trip correctness, random-IV uniqueness per call, wrong-key rejection, tampered-ciphertext (auth tag) rejection, wrong-key-length rejection — 5/5 pass. Manually confirmed the round trip once more with the actual dev `INVENTORY_ENCRYPTION_KEY`.
+- `pnpm typecheck` — 10/10. `pnpm lint` — 10/10, 0 warnings. `pnpm test` — all pass (api + shared). `pnpm test:e2e` — 4/4 against live Postgres/Redis. `pnpm build` — 7/7.
