@@ -153,6 +153,9 @@ importers:
       compression:
         specifier: ^1.7.5
         version: 1.8.2
+      express:
+        specifier: ^4.21.2
+        version: 4.22.1
       grammy:
         specifier: ^1.32.0
         version: 1.46.0

@@ -106,3 +106,76 @@ jobs:
 
       - name: Build
         run: pnpm build
+
+  # Proves the production images actually build from a clean context.
+  # Build-only: pushing to a registry needs credentials this repo does not
+  # assume, and the deploy job below is the documented next step.
+  images:
+    runs-on: ubuntu-latest
+    needs: ci
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build API/worker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: apps/api/Dockerfile
+          push: false
+          load: true
+          tags: sqlm-api:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build frontend images
+        run: |
+          for app in miniapp admin web; do
+            docker build -f "apps/$app/Dockerfile" \
+              --build-arg NEXT_PUBLIC_API_URL=https://api.example.com \
+              -t "sqlm-$app:ci" .
+          done
+
+      # A built image that cannot boot is not a passing build: start the
+      # API against throwaway Postgres/Redis and require the same readiness
+      # endpoint the orchestrator probes.
+      - name: Smoke-test the API image
+        run: |
+          docker network create sqlm-ci
+          docker run -d --name pg --network sqlm-ci \
+            -e POSTGRES_USER=sqlm -e POSTGRES_PASSWORD=sqlm -e POSTGRES_DB=sqlm postgres:16-alpine
+          docker run -d --name redis --network sqlm-ci redis:7-alpine
+          sleep 10
+
+          docker run --rm --network sqlm-ci \
+            -e DATABASE_URL='postgresql://sqlm:sqlm@pg:5432/sqlm?schema=public' \
+            sqlm-api:ci pnpm --filter @sqlm/database exec prisma migrate deploy
+
+          docker run -d --name api --network sqlm-ci -p 4000:4000 \
+            -e NODE_ENV=production \
+            -e DATABASE_URL='postgresql://sqlm:sqlm@pg:5432/sqlm?schema=public' \
+            -e REDIS_HOST=redis -e REDIS_PORT=6379 \
+            -e JWT_ACCESS_SECRET=ci-access-secret-min-32-characters-long \
+            -e JWT_REFRESH_SECRET=ci-refresh-secret-min-32-characters-long \
+            -e INVENTORY_ENCRYPTION_KEY='0000000000000000000000000000000000000000000000000000000000000000' \
+            -e TELEGRAM_BOT_TOKEN='000000:ci-fake' \
+            -e TELEGRAM_WEBHOOK_SECRET=ci-webhook-secret \
+            -e TELEGRAM_WEBHOOK_URL=https://ci.example.com/hook \
+            -e S3_ENDPOINT=http://localhost:9000 -e S3_ACCESS_KEY_ID=ci \
+            -e S3_SECRET_ACCESS_KEY=ci -e S3_BUCKET=sqlm-uploads \
+            -e CORS_ORIGINS=https://app.example.com \
+            -e MINIAPP_URL=https://app.example.com \
+            sqlm-api:ci
+
+          for i in $(seq 1 30); do
+            if curl -fsS http://localhost:4000/api/health/ready; then
+              echo "API image is serving and ready"; exit 0
+            fi
+            sleep 2
+          done
+          echo "API image never became ready"; docker logs api; exit 1
+
+      - name: Container logs on failure
+        if: failure()
+        run: docker logs api || true

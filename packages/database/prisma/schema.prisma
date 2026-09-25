@@ -1,5 +1,11 @@
 generator client {
   provider = "prisma-client-js"
+  // node:22-slim has OpenSSL 3 but not the `openssl` CLI Prisma probes
+  // with, so detection falls back to the 1.1.x engine and the container
+  // dies with "cannot open shared object file: libssl.so.1.1". Generating
+  // the 3.0.x engine explicitly (and pointing the runtime at it in
+  // apps/api/Dockerfile) is deterministic and needs no extra packages.
+  binaryTargets = ["native", "debian-openssl-3.0.x"]
 }
 
 datasource db {

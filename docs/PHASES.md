@@ -15,15 +15,15 @@ the end of every phase instead.
 | 6 | Manual payments + payment proofs | ✅ done |
 | 7 | Telegram Bot adapter | ✅ done |
 | 8 | Telegram Mini App | ✅ done |
-| 9 | Automatic/manual fulfillment | pending |
-| 10 | Support system | pending |
-| 11 | Admin Dashboard | pending |
-| 12 | Realtime notifications | pending |
-| 13 | Redis + BullMQ + workers | pending |
-| 14 | Security hardening | pending |
-| 15 | Observability | pending |
-| 16 | Load/concurrency testing | pending |
-| 17 | Docker + CI/CD + production deployment | pending |
+| 9 | Automatic/manual fulfillment | ✅ done |
+| 10 | Support system | ✅ done |
+| 11 | Admin Dashboard | ✅ done |
+| 12 | Realtime notifications | ✅ done |
+| 13 | Redis + BullMQ + workers | ✅ done |
+| 14 | Security hardening | ✅ done |
+| 15 | Observability | ✅ done |
+| 16 | Load/concurrency testing | ✅ done |
+| 17 | Docker + CI/CD + production deployment | ✅ done |
 
 ## Phase 1 — Repository audit + architecture foundation ✅
 
@@ -323,3 +323,40 @@ client-side and submits the full item list at checkout, matching how
 - Rebuilt and ran the real API against live Postgres/Redis/LocalStack, generated a validly-signed mock `initData` with the same HMAC algorithm the API verifies (bot token from `.env`, confirmed end-to-end with a raw `curl` to `/auth/telegram` before touching a browser), then drove Chromium (the environment's pre-installed browser, via a throwaway `playwright-core` install in the scratchpad — never added to the repo) through the full journey with `page.addInitScript()` injecting `window.Telegram.WebApp`: sign-in → browse categories/featured → search-filter products → open a product → bump quantity → add to cart → cart page (quantity carried over correctly) → checkout → select payment method → place order → land on `/orders/:id` showing `PENDING_PAYMENT` guidance, the correct bank-transfer instructions, and the upload widget → cart empties after success → **rapid double-click on "Place order" on a second cart** lands on one order with no error (the idempotency-key UI actually working, not just the backend test from Phase 5) → orders list shows both orders → account page shows the authenticated profile → support placeholder renders.
 - Console/page-error listeners ran for the whole session: zero uncaught page errors, zero hydration warnings across 11+ full navigations (the `skipHydration` fix verified under the exact conditions it was meant to fix, not assumed correct). The only console noise was the expected failure to load `telegram.org`'s real WebApp script (this sandbox has no route to Telegram's domains, same limitation as Phase 7) — already degraded-gracefully by design.
 - Visually reviewed screenshots of every step (shop, products, search, product detail, cart, checkout, order detail, orders list, account) — correct layout, correct totals ($49 × 2 = $98 verified on both the cart and the resulting order), correct active-tab highlighting in the bottom nav across every route.
+
+## Phases 9–17 ✅
+
+**Phase 9 — fulfillment** (`modules/delivery/`): one `Delivery` row per order item, unique on `orderItemId`. Automatic fulfillment hands over only the order's *own* inventory (`status = SOLD` scoped to `orderId`, claimed with `FOR UPDATE SKIP LOCKED`), so a worker can never issue an item belonging to a different order. Three independent layers stop a double delivery: the `PAID → PROCESSING` transition only one runner can win, the unique constraint, and a `status: PENDING` guard on the update that makes the loser of a race a 0-row no-op. Delivered content is AES-256-GCM encrypted at rest using the same wire format as inventory secrets. A product configured `AUTOMATIC` but backed by `QUANTITY` stock has no secret to hand over, so it resolves to `MANUAL` rather than silently delivering nothing.
+
+**Phase 10 — support** (`modules/support/`): one conversation model shared by the Mini App, the bot and the dashboard, so a Telegram message and an admin reply are rows in the same thread. Free text sent to the bot lands in the customer's active ticket (or opens one). Unread counters move atomically with message inserts; internal staff notes are stripped for customers and never bump their badge.
+
+**Phase 11 — admin dashboard** (`apps/admin`): 12 operational routes. Sidebar entries are filtered by the same `ROLE_PERMISSIONS` map the server guards use, so what renders matches what the API allows — and every endpoint re-checks anyway. Also split `@sqlm/shared` so the package root is browser-safe and `node:crypto` helpers live behind `@sqlm/shared/crypto`; importing `ROLE_PERMISSIONS` into a client component had been dragging `node:crypto` into the webpack bundle.
+
+**Phase 12 — notifications** (`modules/notifications/`): one dispatcher, two legs — SSE for dashboards open right now, the notifications queue for durable Telegram pushes. Both swallow their own failures so an unreachable queue can't roll back the transaction that raised the event. `RealtimeService` fans out over Redis pub/sub so a dashboard on instance A sees events raised on instance B.
+
+**Phase 13 — workers** (`modules/cleanup/`): BullMQ repeatable jobs expire abandoned `PENDING_PAYMENT` orders (releasing their inventory) and prune the Telegram update log. Schedules live in Redis with deterministic job ids, so N replicas run each sweep once. Expiry goes through `OrdersService.transition()` like every other state change.
+
+**Phase 14 — security.** Four real issues, each found by reading the actual surface rather than guessing:
+- CORS fell back to `origin: true` with credentials enabled — any site could drive the API as a logged-in user. Production now refuses to boot without explicit `CORS_ORIGINS`.
+- The SSE access token rides in the query string (EventSource can't set headers) and pino logged `req.url` verbatim, so every log line would have carried a usable staff token. Now redacted.
+- Webhook secrets were compared with `===`; now constant-time.
+- Payment-proof uploads trusted `file.mimetype`, which is just the client's header — an ELF binary labelled `image/png` passed. Uploads are now matched against their magic bytes.
+
+**Phase 15 — observability**: `/admin/queues` reports per-queue counts *plus sample failure reasons* (a count alone never tells you what broke), exports `queue_depth` to Prometheus, and offers retry-failed.
+
+**Phase 16 — concurrency** (`test/concurrency.e2e-spec.ts`, 10 tests asserting database state rather than response codes): duplicate checkout, 6 simultaneous buyers for 3 units, duplicate Telegram updates, five delivery workers on one order, simultaneous payment approvals, duplicate proof uploads, delivery retry after failure, both idempotency guards independently, abandoned-order expiry, and a spoofed upload.
+
+**That suite caught a real bug.** `OrdersService.transition()` read the order status then wrote it, so three concurrent payment-proof uploads each saw `PENDING_PAYMENT` and each created a proof row — the sequential case was guarded, the concurrent one wasn't. The write is now guarded on the status that was read, making *every* transition in the platform atomic.
+
+**Phase 17 — deployment**: multi-stage Dockerfiles per app, `docker-compose.prod.yml` (migrate-then-start ordering, `${VAR:?}` on every secret), Caddy vhosts with security headers and SSE-aware proxying, and a CI job that builds all four images and boots the API image against throwaway Postgres/Redis, failing unless `/api/health/ready` reports both dependencies up. See `docs/DEPLOYMENT.md` for the runbook and rollback strategy.
+
+**Five Dockerfile bugs found by actually running the image, not by reading it:**
+1. No `.dockerignore`, so `COPY . .` dropped the host's pnpm symlink farm over the image's — built fine, then failed at boot with `Cannot find module 'express'`.
+2. A stale `tsbuildinfo` copied from the host convinced `tsc` everything was built, so `dist` never appeared inside the image.
+3. `main.ts` imported `express` (for the body-size limits added in Phase 14) without declaring it; pnpm doesn't hoist transitive deps, so it resolved locally and not in the container.
+4. Prisma's engine probe misidentifies the image's OpenSSL and falls back to a 1.1.x engine that can't load. Fixed by generating the 3.0.x engine explicitly and pointing the runtime at it.
+5. The runtime user had no home directory, so corepack died with `EACCES` on its cache the first time the migrate service ran.
+
+**Verification:** 83/83 e2e across 9 suites against live Postgres/Redis/S3; typecheck 10/10; lint 10/10; unit 5/5; all four images build; API image verified healthy and serving real catalog data, worker image verified running, `prisma migrate deploy` verified against the live database.
+
+**Honest gaps:** actual Telegram message delivery is still unverifiable here (no route to `api.telegram.org`), and the full `docker-compose.prod.yml` stack was never brought up end-to-end in this environment — the individual images were verified by running them, but the composed topology (Caddy TLS, inter-service DNS) was not.
