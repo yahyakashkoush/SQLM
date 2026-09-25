@@ -22,10 +22,7 @@ FROM base AS build
 ARG NEXT_PUBLIC_API_URL=http://localhost:4000
 ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
 ENV NEXT_TELEMETRY_DISABLED=1
-COPY --from=deps /repo/node_modules ./node_modules
-COPY --from=deps /repo/apps/miniapp/node_modules ./apps/miniapp/node_modules
-COPY --from=deps /repo/packages/shared/node_modules ./packages/shared/node_modules
-COPY --from=deps /repo/packages/ui/node_modules ./packages/ui/node_modules
+COPY --from=deps /repo/ /repo/
 COPY . .
 RUN pnpm --filter @sqlm/shared build \
  && pnpm --filter @sqlm/ui build \
