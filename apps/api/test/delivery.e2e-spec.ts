@@ -4,7 +4,7 @@ import { JwtService } from '@nestjs/jwt';
 import { Test, TestingModule } from '@nestjs/testing';
 import request from 'supertest';
 import * as argon2 from 'argon2';
-import { encryptSecret } from '@sqlm/shared';
+import { encryptSecret } from '@sqlm/shared/crypto';
 import { AppModule } from '../src/app.module';
 import { configureApp } from '../src/bootstrap';
 import { PrismaService } from '../src/modules/prisma/prisma.service';

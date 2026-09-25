@@ -1,6 +1,6 @@
 import { PrismaClient } from '@prisma/client';
 import argon2 from 'argon2';
-import { encryptSecret } from '@sqlm/shared';
+import { encryptSecret } from '@sqlm/shared/crypto';
 
 const prisma = new PrismaClient();
 

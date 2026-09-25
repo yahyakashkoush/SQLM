@@ -1,13 +1,8 @@
 import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Prisma, type Delivery } from '@prisma/client';
-import {
-  decryptSecret,
-  encryptSecret,
-  type DeliveryMethod,
-  type DeliveryType,
-  type InventoryMode,
-} from '@sqlm/shared';
+import { type DeliveryMethod, type DeliveryType, type InventoryMode } from '@sqlm/shared';
+import { decryptSecret, encryptSecret } from '@sqlm/shared/crypto';
 import { PrismaService } from '../prisma/prisma.service';
 import { OrdersService } from '../orders/orders.service';
 import { NotificationDispatcher } from '../notifications/notification-dispatcher.service';

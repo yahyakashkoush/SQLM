@@ -1,7 +1,7 @@
 import { Injectable, Logger, UnauthorizedException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
-import { verifyTelegramInitData, TelegramInitDataError } from '@sqlm/shared';
+import { verifyTelegramInitData, TelegramInitDataError } from '@sqlm/shared/crypto';
 import { CustomersService } from '../customers/customers.service';
 
 export interface CustomerAuthResult {

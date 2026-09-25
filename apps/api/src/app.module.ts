@@ -23,6 +23,7 @@ import { DeliveryModule } from './modules/delivery/delivery.module';
 import { DeliveryQueueModule } from './modules/delivery/delivery-queue.module';
 import { NotificationsModule } from './modules/notifications/notifications.module';
 import { SupportModule } from './modules/support/support.module';
+import { AdminModule } from './modules/admin/admin.module';
 
 @Module({
   imports: [
@@ -78,6 +79,7 @@ import { SupportModule } from './modules/support/support.module';
     DeliveryModule,
     NotificationsModule,
     SupportModule,
+    AdminModule,
   ],
   controllers: [AppController],
   providers: [{ provide: APP_GUARD, useClass: ThrottlerGuard }],

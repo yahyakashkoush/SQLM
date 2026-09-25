@@ -17,7 +17,14 @@ export class JwtStaffStrategy extends PassportStrategy(Strategy, 'jwt-staff') {
     private readonly prisma: PrismaService,
   ) {
     super({
-      jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
+      // The query-parameter extractor exists only for SSE: the browser's
+      // EventSource API cannot set an Authorization header. It is the same
+      // short-lived access token, validated identically — no separate,
+      // weaker credential — and every other route still prefers the header.
+      jwtFromRequest: ExtractJwt.fromExtractors([
+        ExtractJwt.fromAuthHeaderAsBearerToken(),
+        ExtractJwt.fromUrlQueryParameter('access_token'),
+      ]),
       ignoreExpiration: false,
       secretOrKey: config.getOrThrow<string>('JWT_ACCESS_SECRET'),
     });

@@ -1,7 +1,8 @@
 import { ForbiddenException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import type { InventoryItem, Prisma } from '@prisma/client';
-import { encryptSecret, decryptSecret, type PaginatedResult } from '@sqlm/shared';
+import { type PaginatedResult } from '@sqlm/shared';
+import { encryptSecret, decryptSecret } from '@sqlm/shared/crypto';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
 import { NotificationDispatcher } from '../notifications/notification-dispatcher.service';
