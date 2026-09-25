@@ -1,0 +1,46 @@
+{
+  "name": "sqlm-platform",
+  "private": true,
+  "version": "0.1.0",
+  "engines": {
+    "node": ">=20.0.0",
+    "pnpm": ">=9.0.0"
+  },
+  "packageManager": "pnpm@10.33.0",
+  "scripts": {
+    "build": "turbo run build",
+    "dev": "turbo run dev",
+    "lint": "turbo run lint",
+    "typecheck": "turbo run typecheck",
+    "test": "turbo run test",
+    "test:e2e": "turbo run test:e2e --filter=@sqlm/api",
+    "format": "prettier --write \"**/*.{ts,tsx,md,json}\" --ignore-unknown",
+    "db:generate": "pnpm --filter @sqlm/database db:generate",
+    "db:migrate": "pnpm --filter @sqlm/database db:migrate",
+    "db:migrate:deploy": "pnpm --filter @sqlm/database db:migrate:deploy",
+    "db:seed": "pnpm --filter @sqlm/database db:seed",
+    "db:studio": "pnpm --filter @sqlm/database db:studio"
+  },
+  "devDependencies": {
+    "turbo": "^2.3.0",
+    "prettier": "^3.4.1",
+    "typescript": "^5.7.2",
+    "eslint": "^9.16.0",
+    "@eslint/js": "^9.16.0",
+    "typescript-eslint": "^8.17.0",
+    "eslint-config-prettier": "^9.1.0"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "@nestjs/core",
+      "@prisma/client",
+      "@prisma/engines",
+      "@scarf/scarf",
+      "argon2",
+      "esbuild",
+      "msgpackr-extract",
+      "prisma",
+      "unrs-resolver"
+    ]
+  }
+}

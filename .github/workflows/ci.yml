@@ -1,0 +1,80 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  DATABASE_URL: postgresql://sqlm:sqlm@localhost:5432/sqlm?schema=public
+  REDIS_URL: redis://localhost:6379
+  JWT_ACCESS_SECRET: ci-access-secret-min-32-characters-long
+  JWT_REFRESH_SECRET: ci-refresh-secret-min-32-characters-long
+  INVENTORY_ENCRYPTION_KEY: '0000000000000000000000000000000000000000000000000000000000000000'
+  S3_ENDPOINT: http://localhost:9000
+  S3_ACCESS_KEY_ID: sqlm-minio
+  S3_SECRET_ACCESS_KEY: sqlm-minio-secret
+  S3_BUCKET: sqlm-uploads
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: sqlm
+          POSTGRES_PASSWORD: sqlm
+          POSTGRES_DB: sqlm
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U sqlm"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports: ['6379:6379']
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Generate Prisma client
+        run: pnpm db:generate
+
+      - name: Apply migrations
+        run: pnpm db:migrate:deploy
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Unit tests
+        run: pnpm test
+
+      - name: Build
+        run: pnpm build
