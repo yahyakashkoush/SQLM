@@ -15,6 +15,9 @@ env:
   JWT_ACCESS_SECRET: ci-access-secret-min-32-characters-long
   JWT_REFRESH_SECRET: ci-refresh-secret-min-32-characters-long
   INVENTORY_ENCRYPTION_KEY: '0000000000000000000000000000000000000000000000000000000000000000'
+  TELEGRAM_BOT_TOKEN: '000000:ci-fake-bot-token-for-e2e-tests'
+  # Relaxed so the e2e suite's repeated login calls don't 429 each other; production keeps the strict default (5).
+  AUTH_RATE_LIMIT_MAX: '1000'
   S3_ENDPOINT: http://localhost:9000
   S3_ACCESS_KEY_ID: sqlm-minio
   S3_SECRET_ACCESS_KEY: sqlm-minio-secret
@@ -75,6 +78,9 @@ jobs:
 
       - name: Unit tests
         run: pnpm test
+
+      - name: E2E tests
+        run: pnpm test:e2e
 
       - name: Build
         run: pnpm build

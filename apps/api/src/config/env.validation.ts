@@ -50,6 +50,9 @@ export const envSchema = z.object({
 
   RATE_LIMIT_WINDOW_MS: z.coerce.number().int().positive().default(60000),
   RATE_LIMIT_MAX: z.coerce.number().int().positive().default(120),
+  /** Deliberately much stricter default — brute-force protection on login/Telegram-auth. */
+  AUTH_RATE_LIMIT_WINDOW_MS: z.coerce.number().int().positive().default(60000),
+  AUTH_RATE_LIMIT_MAX: z.coerce.number().int().positive().default(5),
 
   CORS_ORIGINS: optionalString(),
 });

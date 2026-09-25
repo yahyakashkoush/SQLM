@@ -6,3 +6,4 @@ export * from './permissions';
 export * from './dto/common';
 export * from './dto/checkout';
 export * from './crypto/inventory-encryption';
+export * from './crypto/telegram-init-data';

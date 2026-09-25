@@ -9,7 +9,7 @@ the end of every phase instead.
 |---|---|---|
 | 1 | Repository audit + architecture foundation | ✅ done |
 | 2 | Database + Prisma + core domain models | ✅ done |
-| 3 | Authentication + RBAC | pending |
+| 3 | Authentication + RBAC | ✅ done |
 | 4 | Products + categories + inventory | pending |
 | 5 | Orders + checkout + order state machine | pending |
 | 6 | Manual payments + payment proofs | pending |
@@ -105,3 +105,59 @@ Admin Dashboard; nothing in application code branches on them.
 - `pnpm db:seed` run twice — second run is a true no-op (upserts + existence checks), confirmed via row counts (`staff=1, payment_methods=3, platform_settings=3, categories=1, products=2, inventory_items=2`).
 - New unit tests for the encryption helper (`packages/shared`, Node's built-in test runner via `tsx --test`): round-trip correctness, random-IV uniqueness per call, wrong-key rejection, tampered-ciphertext (auth tag) rejection, wrong-key-length rejection — 5/5 pass. Manually confirmed the round trip once more with the actual dev `INVENTORY_ENCRYPTION_KEY`.
 - `pnpm typecheck` — 10/10. `pnpm lint` — 10/10, 0 warnings. `pnpm test` — all pass (api + shared). `pnpm test:e2e` — 4/4 against live Postgres/Redis. `pnpm build` — 7/7.
+
+## Phase 3 — Authentication + RBAC ✅
+
+**Scope:** two independent JWT auth flows on one `JWT_ACCESS_SECRET`,
+distinguished by a `type: 'staff' | 'customer'` claim each Passport
+strategy checks (a staff token can never authenticate as a customer or
+vice versa):
+
+- **Staff** (`modules/auth/staff-auth.{service,controller}.ts`):
+  email+password login (argon2), short-lived access token +
+  long-lived opaque refresh token. Refresh tokens are never JWTs — random
+  48-byte values, stored only as a SHA-256 hash in `StaffRefreshToken`, so
+  they can be revoked server-side (JWTs can't be). Refresh **rotates**: every
+  `/auth/staff/refresh` call revokes the token it was given and issues a new
+  pair, so a stolen-and-reused refresh token is detectable. Login compares
+  against a dummy argon2 hash when the email doesn't exist, so response
+  timing doesn't leak which emails are registered.
+- **Customer** (`modules/auth/customer-auth.{service,controller}.ts`):
+  Telegram Mini App `initData` → `packages/shared/src/crypto/telegram-init-data.ts`
+  (HMAC-SHA256 per Telegram's documented algorithm, `timingSafeEqual`
+  comparison, rejects payloads older than 24h) → upserts `Customer` →
+  24h access token. No customer refresh token: the Mini App re-sends fresh
+  `initData` every time it's opened, which is Telegram's own intended
+  re-auth mechanism.
+
+**RBAC** (`modules/rbac/`): `PermissionsGuard` checks a route's
+`@Permissions(...)` metadata against `packages/shared`'s static
+`ROLE_PERMISSIONS[staff.role]` — authorization logic lives in exactly one
+place, never re-implemented per route. `GET /rbac/roles` (permission
+`roles.read`) exposes the full role→permission matrix for the future
+Admin Dashboard `/admin/roles` page. `JwtStaffAuthGuard`/
+`JwtCustomerAuthGuard` attach the authenticated principal to
+`request.staff` / `request.customer` (never the shared `request.user`)
+so the two principal types can't be confused if a route is reachable by
+mistake from both guard types.
+
+Guards are applied per-route via `@UseGuards(...)`, not globally — this API
+mixes public storefront reads, customer-authenticated, and staff-authenticated
+routes on the same server, so a blanket global guard would need constant
+`@Public()` exceptions.
+
+**Security hardening landed alongside auth** (found while wiring the
+global `ThrottlerGuard`, which Phase 1 had imported but never actually
+registered — rate limiting wasn't being enforced at all until now):
+named Throttler profiles (`default` 120/min, stricter `auth` 5/min by
+default) so login and Telegram-auth — the platform's brute-force targets —
+get independently tunable limits via `AUTH_RATE_LIMIT_MAX` /
+`AUTH_RATE_LIMIT_WINDOW_MS`, without loosening the global API limit. CI
+and local dev set `AUTH_RATE_LIMIT_MAX` high so the e2e suite's repeated
+login calls don't rate-limit each other; production keeps the strict
+default.
+
+**Verification (all green):**
+- New `apps/api/test/auth.e2e-spec.ts` (11 tests) against live Postgres/Redis: unknown-email and wrong-password rejection, successful login response shape, `/me` unauthenticated (401) vs authenticated, refresh-token rotation (old token rejected after rotation), logout revocation, RBAC allow (OWNER → `roles.read`) and deny (SUPPORT_AGENT → 403), Telegram auth rejection on bad signature and full authenticate→`/me` round trip on a validly-signed payload.
+- `packages/shared` gained 5 more unit tests for `verifyTelegramInitData` (valid signature, wrong bot token, tampered field, stale `auth_date`, missing hash) — 15/15 total in that package now.
+- `pnpm typecheck` — 10/10. `pnpm lint` — 10/10. `pnpm test` — all pass. `pnpm test:e2e` — 15/15. `pnpm build` — 7/7. CI workflow updated to actually run `test:e2e` (it previously only ran unit tests).
