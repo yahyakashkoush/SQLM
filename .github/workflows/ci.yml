@@ -50,6 +50,22 @@ jobs:
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
+      storage:
+        # Same pinned image as docker-compose.yml's `storage` service — see
+        # the note there on why LocalStack instead of MinIO. Community-edition
+        # LocalStack doesn't enforce SigV4 auth on S3, so the bucket-creation
+        # step below is a plain unsigned `curl PUT`, no AWS CLI required.
+        image: localstack/localstack:3.8.1
+        env:
+          SERVICES: s3
+          AWS_DEFAULT_REGION: us-east-1
+          EAGER_SERVICE_LOADING: 1
+        ports: ['9000:4566']
+        options: >-
+          --health-cmd "curl -f http://localhost:4566/_localstack/health"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
 
     steps:
       - uses: actions/checkout@v4
@@ -72,6 +88,9 @@ jobs:
 
       - name: Apply migrations
         run: pnpm db:migrate:deploy
+
+      - name: Create S3 bucket in LocalStack
+        run: curl -sf -X PUT "http://localhost:9000/${S3_BUCKET}"
 
       - name: Typecheck
         run: pnpm typecheck
