@@ -66,7 +66,7 @@ independently, which is what the load profile in the spec actually needs.
 | `support` | Ticket/conversation system (Telegram ⇄ Admin bidirectional) |
 | `telegram` | Bot adapter: webhook controller + grammy bot, menus, notifications |
 | `notifications` | Outbound notification dispatch (Telegram, future: email) |
-| `storage` | S3-compatible object storage client (MinIO in dev) |
+| `storage` | S3-compatible object storage client (LocalStack in dev — see docker-compose.yml) |
 | `audit` | Audit log writer used by admin mutations and order transitions |
 | `admin` | Dashboard aggregation endpoints |
 | `health` | Liveness/readiness + Prometheus metrics |

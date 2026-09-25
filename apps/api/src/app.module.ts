@@ -14,6 +14,8 @@ import { AuditModule } from './modules/audit/audit.module';
 import { CatalogModule } from './modules/catalog/catalog.module';
 import { InventoryModule } from './modules/inventory/inventory.module';
 import { OrdersModule } from './modules/orders/orders.module';
+import { StorageModule } from './modules/storage/storage.module';
+import { PaymentsModule } from './modules/payments/payments.module';
 
 @Module({
   imports: [
@@ -60,6 +62,8 @@ import { OrdersModule } from './modules/orders/orders.module';
     CatalogModule,
     InventoryModule,
     OrdersModule,
+    StorageModule,
+    PaymentsModule,
   ],
   controllers: [AppController],
   providers: [{ provide: APP_GUARD, useClass: ThrottlerGuard }],

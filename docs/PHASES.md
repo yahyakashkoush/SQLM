@@ -12,7 +12,7 @@ the end of every phase instead.
 | 3 | Authentication + RBAC | ✅ done |
 | 4 | Products + categories + inventory | ✅ done |
 | 5 | Orders + checkout + order state machine | ✅ done |
-| 6 | Manual payments + payment proofs | pending |
+| 6 | Manual payments + payment proofs | ✅ done |
 | 7 | Telegram Bot adapter | pending |
 | 8 | Telegram Mini App | pending |
 | 9 | Automatic/manual fulfillment | pending |
@@ -265,3 +265,27 @@ client-side and submits the full item list at checkout, matching how
 - Invalid transition (state-skipping) → 409.
 - Cancellation releases reservations correctly for **both** inventory modes, independently verified (individual items back to `AVAILABLE` with `orderId` cleared; `QUANTITY` stock incremented back).
 - `pnpm typecheck` — 10/10. `pnpm lint` — 10/10. `pnpm test` — all pass. `pnpm test:e2e` — 34/34. `pnpm build` — 7/7.
+
+**CI status:** as of this phase's push (commit `15585ce`), the PR's actual CI run is green for the first time (`conclusion: success`) — confirmed via the GitHub API, not assumed. Both CI-only bugs above are fully resolved.
+
+## Phase 6 — Manual payments + payment proofs ✅
+
+**Scope:** `modules/storage/` — a thin `StorageService` over `@aws-sdk/client-s3`, used for every upload from here on. Fixed a latent security issue while building this: the Phase 1 LocalStack init script made the whole dev bucket public-read, which would have been the wrong default the moment payment-proof screenshots (transaction details, partial account numbers) landed in it. The bucket is now private; all access is a time-limited presigned URL (`getPresignedUrl`, 15 minutes for admin proof review) generated on demand for an already-authorized request — verified by actually deleting the stale public bucket policy and confirming `NoSuchBucketPolicy` before writing any proof-handling code.
+
+`modules/payments/`:
+- **Payment methods**: admin CRUD (`payments.methods.write`) matching the spec's own fields (name, description, account number, instructions, QR code, currency, enabled, display order); public endpoint returns only `enabled` ones. Never hard-deleted — orders reference them historically — "delete" disables instead.
+- **Payment proofs**: `uploadProof` is gated entirely by order state — only a `PENDING_PAYMENT` order accepts a proof. Since a successful upload immediately moves the order to `PAYMENT_SUBMITTED → PAYMENT_REVIEW` (two chained `OrdersService.transition()` calls in one DB transaction, both from Phase 5's state machine — no new transition-writing code needed here), a second upload attempt lands on "order not awaiting payment" instead of creating a duplicate `PaymentProof` row. This is the spec's "customer uploads the same screenshot twice" requirement, satisfied by composing Phase 5's state machine rather than adding separate dedup bookkeeping.
+- `approve`/`reject` each run as a single transaction: an optimistic `updateMany({ where: { id, status: 'PENDING' } })` guard plus the order transition, together. Two admins racing to approve/reject the *same* proof — the spec's explicit "duplicate admin payment approval" scenario — means one `updateMany` affects 1 row and proceeds to `PAID`; Postgres re-evaluates the second (blocked) transaction's `WHERE` clause against the just-committed row when it unblocks, sees `status != 'PENDING'` already, affects 0 rows, and the loser gets `ProofAlreadyReviewedError` (409) — the same "atomic guarded UPDATE" pattern Phase 4 used for inventory, applied here to payment review.
+- Reject takes a `cancelOrder` flag: `false` returns the order to `PENDING_PAYMENT` so the customer can resubmit (still gated the same way); `true` cancels outright, which — because `OrdersService.transition()` already releases inventory unconditionally on any `CANCELLED` transition (Phase 5) — automatically returns reserved stock with no payments-specific release code.
+- Never auto-approves on upload, per the spec: `PaymentProof.status` starts and stays `PENDING` until a staff member with `payments.proofs.review` acts on it.
+
+**Verification (all green) — `apps/api/test/payments.e2e-spec.ts`, 12 new tests against live Postgres/Redis (42/42 total in the suite now):**
+- Public payment-method listing excludes disabled methods.
+- Upload → order reaches `PAYMENT_REVIEW`; a second upload on the same order → 409, and the `PaymentProof` row count is asserted to stay at 1 (not just the HTTP response).
+- Unsupported file type (an `.exe`) → 400.
+- Approve → order `PAID` with `paidAt` set.
+- **Two admins racing to approve the same proof** (`Promise.all`, distinct staff accounts and tokens): exactly one `201`, one `409`; order ends up `PAID` exactly once; exactly one `PAYMENT_APPROVED` `OrderEvent` — not the request outcome alone, the actual downstream state.
+- Reject-and-resubmit: order returns to `PENDING_PAYMENT`, and a follow-up upload is accepted.
+- Reject-and-cancel: order `CANCELLED`, `QUANTITY` stock verifiably restored to its pre-checkout value.
+- Presigned view URL is generated and well-formed.
+- `pnpm typecheck` — 10/10. `pnpm lint` — 10/10. `pnpm test` — all pass. `pnpm test:e2e` — 42/42. `pnpm build` — 7/7.
