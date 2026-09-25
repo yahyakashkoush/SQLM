@@ -2,7 +2,7 @@ import { Injectable, Logger, UnauthorizedException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import { verifyTelegramInitData, TelegramInitDataError } from '@sqlm/shared';
-import { PrismaService } from '../prisma/prisma.service';
+import { CustomersService } from '../customers/customers.service';
 
 export interface CustomerAuthResult {
   accessToken: string;
@@ -14,7 +14,7 @@ export class CustomerAuthService {
   private readonly logger = new Logger(CustomerAuthService.name);
 
   constructor(
-    private readonly prisma: PrismaService,
+    private readonly customers: CustomersService,
     private readonly jwt: JwtService,
     private readonly config: ConfigService,
   ) {}
@@ -35,25 +35,7 @@ export class CustomerAuthService {
       throw err;
     }
 
-    const { user } = verified;
-    const customer = await this.prisma.customer.upsert({
-      where: { telegramId: BigInt(user.id) },
-      update: {
-        telegramUsername: user.username,
-        firstName: user.firstName,
-        lastName: user.lastName,
-        languageCode: user.languageCode,
-        lastSeenAt: new Date(),
-      },
-      create: {
-        telegramId: BigInt(user.id),
-        telegramUsername: user.username,
-        firstName: user.firstName,
-        lastName: user.lastName,
-        languageCode: user.languageCode,
-        lastSeenAt: new Date(),
-      },
-    });
+    const customer = await this.customers.upsertFromTelegram(verified.user);
 
     if (customer.status !== 'ACTIVE') {
       throw new UnauthorizedException('This account has been suspended');

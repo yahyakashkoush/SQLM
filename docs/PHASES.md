@@ -13,7 +13,7 @@ the end of every phase instead.
 | 4 | Products + categories + inventory | ✅ done |
 | 5 | Orders + checkout + order state machine | ✅ done |
 | 6 | Manual payments + payment proofs | ✅ done |
-| 7 | Telegram Bot adapter | pending |
+| 7 | Telegram Bot adapter | ✅ done |
 | 8 | Telegram Mini App | pending |
 | 9 | Automatic/manual fulfillment | pending |
 | 10 | Support system | pending |
@@ -289,3 +289,22 @@ client-side and submits the full item list at checkout, matching how
 - Reject-and-cancel: order `CANCELLED`, `QUANTITY` stock verifiably restored to its pre-checkout value.
 - Presigned view URL is generated and well-formed.
 - `pnpm typecheck` — 10/10. `pnpm lint` — 10/10. `pnpm test` — all pass. `pnpm test:e2e` — 42/42. `pnpm build` — 7/7.
+
+## Phase 7 — Telegram Bot adapter ✅
+
+**Scope:** `modules/queue/` — the first real BullMQ wiring: a global module owning the shared Redis connection (`maxRetriesPerRequest: null`, mandatory for BullMQ's blocking commands) and `defaultJobOptions` (5 attempts, exponential backoff, bounded retention) every queue inherits. `QUEUE_NAMES` registers all ten names from spec §15 up front; only `telegram-updates` has an actual processor this phase — the rest get theirs as their owning modules gain background processing (Phase 9 delivery, Phase 12 notifications, the remainder in Phase 13).
+
+`modules/telegram/` implements the exact webhook→queue→worker shape ARCHITECTURE.md §5 committed to:
+- `TelegramWebhookController`: validates the path secret *and* the `X-Telegram-Bot-Api-Secret-Token` header, claims the update via Redis `SETNX` (`RedisService.claimOnce`, built in Phase 1) so a duplicate delivery never reaches the queue, then enqueues with `jobId: telegram-update-${update_id}` (a second, BullMQ-level idempotency layer) and returns immediately — no Prisma, no Telegram API calls, nothing slow in the request path.
+- `TelegramUpdateProcessor`: the worker. A unique constraint on `TelegramUpdateLog.updateId` is the third line of defense (catches the case where a job was somehow enqueued twice despite the Redis claim — e.g. Redis was briefly down). Logs `PROCESSING`→`COMPLETED`/`FAILED`, and a failure re-throws so BullMQ retries per the queue's backoff policy.
+- `TelegramBotService`: wraps a `grammy` `Bot`. Every handler either replies with a short text summary built from `OrdersService`/`CustomersService`, or hands off to the Mini App via a `web_app` inline button — spec §5's full menu (🏠🛍️🔥🔎📦💳🎫👤), none of it touching Prisma directly. Self-registers the webhook URL with Telegram on boot (`setWebhook`) when configured.
+- New `modules/customers/`: extracted `upsertFromTelegram` out of Phase 3's `CustomerAuthService` so the Mini App's HMAC-verified `initData` flow and the bot's webhook-secret-verified flow (which needs no HMAC check of its own — the webhook secret already authenticates it) share one upsert implementation instead of two that could drift.
+
+**Real bug caught by testing, not by review:** `TelegramBotService.onModuleInit()` calling `bot.init()` (a real `getMe` call to `api.telegram.org`) has no bounded timeout in grammy, and this sandbox has no route to Telegram's API (confirmed directly: a plain `curl` to `api.telegram.org` hangs/resets through the egress proxy). Since `onModuleInit` gates Nest's bootstrap, this hung *the entire application* — including the plain REST API, which has nothing to do with the bot — every time a `TELEGRAM_BOT_TOKEN` was configured. First surfaced as all-suites-timeout when the e2e run first included `TelegramModule`. Fixed with a small `withTimeout()` utility (`common/utils/with-timeout.ts`, 8s bound, reusable for the next external HTTP client that doesn't apply its own timeout) plus an explicit skip under `NODE_ENV=test` so the test suite doesn't pay that bound five times over. Verified by actually building and running `dist/worker.js` standalone (not just the test suite): every module initializes, `bot.init()` times out at 8000ms exactly, the failure is logged as a caught error rather than an unhandled rejection, and the process stays alive afterward — the degraded-mode contract holds for real, not just in a test double.
+
+**Honest testing limitation:** actual Telegram message delivery (does `ctx.reply()` really reach a chat) is not verifiable in this environment — no network path to `api.telegram.org` exists here, confirmed directly rather than assumed. What *is* verified end-to-end: webhook validation, all three idempotency layers, queue enqueueing, and (via a dedicated unit test) the keyboard-building logic every handler uses. Production message delivery depends on grammy's own correctness plus real network access, neither of which this sandbox can exercise.
+
+**Verification (all green):**
+- New `apps/api/test/telegram-webhook.e2e-spec.ts` (7 tests) against live Postgres/Redis: wrong path secret / missing header secret / mismatched header secret → 403; missing `update_id` → 400; a valid update enqueues exactly one job (inspected via `queue.getJob`, not just the HTTP response); three identical webhook deliveries for the same `update_id` still enqueue exactly one job (`queue.getJobCounts()` summed); the Redis claim primitive directly (`claimOnce` true then false); the DB-level ledger directly (a duplicate `TelegramUpdateLog.updateId` insert rejects, row count stays 1).
+- New `main-menu.keyboard.spec.ts` (3 unit tests): every menu label present exactly once, 2-column layout, the `web_app` inline button carries the exact URL passed in.
+- `pnpm typecheck` — 10/10. `pnpm lint` — 10/10. `pnpm test` — all pass (4). `pnpm test:e2e` — 50/50. `pnpm build` — 7/7. Also manually ran the built worker process standalone to confirm the timeout fix under real (non-test) conditions.

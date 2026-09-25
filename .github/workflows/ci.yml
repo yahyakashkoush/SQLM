@@ -16,6 +16,8 @@ env:
   JWT_REFRESH_SECRET: ci-refresh-secret-min-32-characters-long
   INVENTORY_ENCRYPTION_KEY: '0000000000000000000000000000000000000000000000000000000000000000'
   TELEGRAM_BOT_TOKEN: '000000:ci-fake-bot-token-for-e2e-tests'
+  TELEGRAM_WEBHOOK_SECRET: ci-webhook-secret
+  TELEGRAM_WEBHOOK_URL: https://ci.example.com/api/v1/telegram/webhook/ci-webhook-secret
   # Relaxed so the e2e suite's repeated login calls don't 429 each other; production keeps the strict default (5).
   AUTH_RATE_LIMIT_MAX: '1000'
   S3_ENDPOINT: http://localhost:9000

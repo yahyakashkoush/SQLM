@@ -16,6 +16,9 @@ import { InventoryModule } from './modules/inventory/inventory.module';
 import { OrdersModule } from './modules/orders/orders.module';
 import { StorageModule } from './modules/storage/storage.module';
 import { PaymentsModule } from './modules/payments/payments.module';
+import { QueueModule } from './modules/queue/queue.module';
+import { CustomersModule } from './modules/customers/customers.module';
+import { TelegramModule } from './modules/telegram/telegram.module';
 
 @Module({
   imports: [
@@ -55,7 +58,9 @@ import { PaymentsModule } from './modules/payments/payments.module';
     }),
     PrismaModule,
     RedisModule,
+    QueueModule,
     HealthModule,
+    CustomersModule,
     AuthModule,
     RbacModule,
     AuditModule,
@@ -64,6 +69,7 @@ import { PaymentsModule } from './modules/payments/payments.module';
     OrdersModule,
     StorageModule,
     PaymentsModule,
+    TelegramModule,
   ],
   controllers: [AppController],
   providers: [{ provide: APP_GUARD, useClass: ThrottlerGuard }],
