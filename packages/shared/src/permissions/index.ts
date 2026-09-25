@@ -56,6 +56,7 @@ export const ROLE_PERMISSIONS: Record<Role, readonly Permission[]> = {
     'categories.write',
     'inventory.read',
     'inventory.write',
+    'inventory.reveal_secret',
     'orders.read',
     'orders.write',
     'orders.transition',

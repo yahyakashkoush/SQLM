@@ -10,6 +10,9 @@ import { RedisModule } from './modules/redis/redis.module';
 import { HealthModule } from './modules/health/health.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { RbacModule } from './modules/rbac/rbac.module';
+import { AuditModule } from './modules/audit/audit.module';
+import { CatalogModule } from './modules/catalog/catalog.module';
+import { InventoryModule } from './modules/inventory/inventory.module';
 
 @Module({
   imports: [
@@ -52,6 +55,9 @@ import { RbacModule } from './modules/rbac/rbac.module';
     HealthModule,
     AuthModule,
     RbacModule,
+    AuditModule,
+    CatalogModule,
+    InventoryModule,
   ],
   controllers: [AppController],
   providers: [{ provide: APP_GUARD, useClass: ThrottlerGuard }],

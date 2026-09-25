@@ -10,7 +10,7 @@ the end of every phase instead.
 | 1 | Repository audit + architecture foundation | ✅ done |
 | 2 | Database + Prisma + core domain models | ✅ done |
 | 3 | Authentication + RBAC | ✅ done |
-| 4 | Products + categories + inventory | pending |
+| 4 | Products + categories + inventory | ✅ done |
 | 5 | Orders + checkout + order state machine | pending |
 | 6 | Manual payments + payment proofs | pending |
 | 7 | Telegram Bot adapter | pending |
@@ -161,3 +161,51 @@ default.
 - New `apps/api/test/auth.e2e-spec.ts` (11 tests) against live Postgres/Redis: unknown-email and wrong-password rejection, successful login response shape, `/me` unauthenticated (401) vs authenticated, refresh-token rotation (old token rejected after rotation), logout revocation, RBAC allow (OWNER → `roles.read`) and deny (SUPPORT_AGENT → 403), Telegram auth rejection on bad signature and full authenticate→`/me` round trip on a validly-signed payload.
 - `packages/shared` gained 5 more unit tests for `verifyTelegramInitData` (valid signature, wrong bot token, tampered field, stale `auth_date`, missing hash) — 15/15 total in that package now.
 - `pnpm typecheck` — 10/10. `pnpm lint` — 10/10. `pnpm test` — all pass. `pnpm test:e2e` — 15/15. `pnpm build` — 7/7. CI workflow updated to actually run `test:e2e` (it previously only ran unit tests).
+
+## Phase 4 — Products + categories + inventory ✅
+
+**Scope:** `modules/catalog/` (categories + products, split into public and
+`admin/`-prefixed controllers so guard application is class-level, not
+scattered per-method): public browsing only ever returns
+`status=ACTIVE, visibility=VISIBLE` (a `DRAFT` product 404s on the public
+endpoint even by direct slug lookup — verified by e2e, not just assumed);
+admin endpoints are fully paginated/searchable/filterable and gated by
+`products.read`/`products.write`/`categories.read`/`categories.write`.
+Product listings compute `availableStock` per item — `product.stock`
+directly for `QUANTITY` mode, a single batched `groupBy` count of
+`AVAILABLE` inventory items for `INDIVIDUAL` mode (one query for the whole
+page, not one per product).
+
+`modules/inventory/` — the concurrency-critical module:
+- `bulkImport` encrypts each secret (Phase 2's `encryptSecret`) before
+  storage; list views select every `InventoryItem` column **except**
+  `encryptedPayload` at the query level, so the secret physically never
+  leaves the database in a listing response, not just "isn't shown by the
+  client."
+- `revealSecret` decrypts one item and writes an `AuditLog` row
+  (new `modules/audit/`, a global module — nearly every staff mutation
+  needs it) tagging the requesting staff id. Gated by a **separate**
+  `inventory.reveal_secret` permission, not bundled into `inventory.read`.
+- `reserveIndividualItems`: `SELECT ... FOR UPDATE SKIP LOCKED` inside the
+  caller's transaction, so concurrent reservations for the same product
+  never block each other on rows another transaction is already claiming.
+- `reserveQuantity`: atomic `UPDATE product SET stock = stock - qty WHERE
+  stock >= qty` — safe under concurrency without explicit locking, because
+  Postgres re-evaluates the `WHERE` clause against the just-committed row
+  when a blocked `UPDATE` unblocks (`result.count === 0` on the loser,
+  every time, never a stale read).
+- Both reservation primitives take a `Prisma.TransactionClient`, not a
+  bare `PrismaService` — they're building blocks Phase 5's checkout
+  transaction composes, not standalone endpoints.
+
+**RBAC fix found by testing, not by inspection:** the Phase 3 permission
+matrix gave `ADMIN` `inventory.write` but not `inventory.reveal_secret`,
+which doesn't match the spec's description of `ADMIN` having full
+inventory scope (only `DELIVERY_AGENT` had it). Writing the e2e test for
+"admin reveals a secret" caught this immediately (403 where the test
+expected 201) — fixed by granting `ADMIN` `inventory.reveal_secret` too,
+rather than by weakening the test.
+
+**Verification (all green):**
+- New `apps/api/test/catalog-inventory.e2e-spec.ts` (12 tests) against live Postgres/Redis, including the two that matter most for a commerce platform: **N concurrent reservation attempts against 3 available individual inventory items** (8 attempts → exactly 3 succeed, 5 throw `InsufficientInventoryError`, 0 left `AVAILABLE`, exactly 3 `RESERVED`) and the same shape for **QUANTITY-mode stock** (8 concurrent decrement attempts against `stock=3` → exactly 3 succeed, final `stock === 0`, never negative). Also: draft-product 404 on public routes then visible after publish, duplicate category slug rejection, permission denial for a role without `products.write`, bulk import + list-never-exposes-secret + reveal-is-audited.
+- `pnpm typecheck` — 10/10. `pnpm lint` — 10/10. `pnpm test` — all pass. `pnpm test:e2e` — 23/23. `pnpm build` — 7/7.
