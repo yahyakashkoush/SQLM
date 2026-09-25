@@ -13,10 +13,16 @@ import Redis, { Redis as RedisClient } from 'ioredis';
 export class RedisService implements OnModuleDestroy {
   private readonly logger = new Logger(RedisService.name);
   public readonly client: RedisClient;
+  private subscriber?: RedisClient;
 
   constructor(private readonly config: ConfigService) {
+    this.client = this.createClient();
+    this.client.on('error', (err) => this.logger.error('Redis connection error', err));
+  }
+
+  private createClient(): RedisClient {
     const url = this.config.get<string>('REDIS_URL');
-    this.client = url
+    return url
       ? new Redis(url, { maxRetriesPerRequest: 3 })
       : new Redis({
           host: this.config.get<string>('REDIS_HOST', 'localhost'),
@@ -24,8 +30,31 @@ export class RedisService implements OnModuleDestroy {
           password: this.config.get<string>('REDIS_PASSWORD') || undefined,
           maxRetriesPerRequest: 3,
         });
+  }
 
-    this.client.on('error', (err) => this.logger.error('Redis connection error', err));
+  /**
+   * Fan-out across API instances. A connection in subscriber mode can't run
+   * normal commands, so subscribing gets its own client, created lazily —
+   * the worker tier never subscribes and shouldn't pay for a second
+   * connection.
+   */
+  async publish(channel: string, payload: unknown): Promise<void> {
+    await this.client.publish(channel, JSON.stringify(payload));
+  }
+
+  async subscribe(channel: string, handler: (payload: unknown) => void): Promise<void> {
+    this.subscriber ??= this.createClient();
+    this.subscriber.on('error', (err) => this.logger.error('Redis subscriber error', err));
+
+    await this.subscriber.subscribe(channel);
+    this.subscriber.on('message', (received, message) => {
+      if (received !== channel) return;
+      try {
+        handler(JSON.parse(message));
+      } catch {
+        this.logger.warn(`Discarding malformed message on ${channel}`);
+      }
+    });
   }
 
   /**
@@ -64,6 +93,7 @@ export class RedisService implements OnModuleDestroy {
   }
 
   async onModuleDestroy(): Promise<void> {
+    this.subscriber?.disconnect();
     this.client.disconnect();
   }
 }

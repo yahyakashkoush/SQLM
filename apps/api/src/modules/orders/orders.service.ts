@@ -5,7 +5,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { NotificationDispatcher } from '../notifications/notification-dispatcher.service';
 import { InventoryService } from '../inventory/inventory.service';
 import { InsufficientInventoryError } from '../inventory/errors/insufficient-inventory.error';
-import { assertTransitionAllowed } from './order-state-machine';
+import { assertTransitionAllowed, InvalidOrderTransitionError } from './order-state-machine';
 import { ProductNotPurchasableError, PaymentMethodUnavailableError } from './errors/order.errors';
 import type { CheckoutDto } from './dto/checkout.dto';
 import type { OrderQueryDto } from './dto/order-query.dto';
@@ -166,8 +166,13 @@ export class OrdersService {
 
     assertTransitionAllowed(order.status as OrderStatus, toStatus);
 
-    const updated = await tx.order.update({
-      where: { id: orderId },
+    // Guarded on the status we just read: two concurrent transitions out of
+    // the same state race here, and the loser updates 0 rows instead of
+    // both proceeding on a stale read. Without this the read-then-write
+    // above is a TOCTOU window — three simultaneous payment-proof uploads
+    // each saw PENDING_PAYMENT and each created a proof.
+    const claimed = await tx.order.updateMany({
+      where: { id: orderId, status: order.status },
       data: {
         status: toStatus,
         ...(toStatus === 'PAID' ? { paidAt: new Date() } : {}),
@@ -176,6 +181,11 @@ export class OrdersService {
         ...(toStatus === 'CANCELLED' ? { cancelledAt: new Date(), cancelReason: note } : {}),
       },
     });
+    if (claimed.count === 0) {
+      const current = await tx.order.findUniqueOrThrow({ where: { id: orderId } });
+      throw new InvalidOrderTransitionError(current.status as OrderStatus, toStatus);
+    }
+    const updated = await tx.order.findUniqueOrThrow({ where: { id: orderId } });
 
     await tx.orderEvent.create({
       data: {

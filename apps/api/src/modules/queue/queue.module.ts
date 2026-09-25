@@ -1,6 +1,9 @@
 import { Global, Module } from '@nestjs/common';
 import { BullModule } from '@nestjs/bullmq';
 import { ConfigModule, ConfigService } from '@nestjs/config';
+import { QueueHealthService } from './queue-health.service';
+import { QueueHealthController } from './queue-health.controller';
+import { HealthModule } from '../health/health.module';
 
 /**
  * Global BullMQ connection config. Feature modules (telegram, and — from
@@ -16,6 +19,7 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
 @Global()
 @Module({
   imports: [
+    HealthModule,
     BullModule.forRootAsync({
       imports: [ConfigModule],
       inject: [ConfigService],
@@ -35,6 +39,8 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
       }),
     }),
   ],
-  exports: [BullModule],
+  controllers: [QueueHealthController],
+  providers: [QueueHealthService],
+  exports: [BullModule, QueueHealthService],
 })
 export class QueueModule {}

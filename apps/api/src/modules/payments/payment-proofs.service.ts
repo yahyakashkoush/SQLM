@@ -1,6 +1,7 @@
 import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { nanoid } from 'nanoid';
 import { PrismaService } from '../prisma/prisma.service';
+import { matchesDeclaredType } from '../../common/utils/file-signature';
 import { DeliveryDispatcher } from '../delivery/delivery-dispatcher.service';
 import { NotificationDispatcher } from '../notifications/notification-dispatcher.service';
 import { StorageService } from '../storage/storage.service';
@@ -42,6 +43,11 @@ export class PaymentProofsService {
   async uploadProof(orderId: string, customerId: string, file: UploadedProofFile) {
     if (!ALLOWED_MIME_TYPES.has(file.mimetype)) {
       throw new UnsupportedProofFileTypeError(file.mimetype);
+    }
+    // The declared type is the client's header and nothing more, so the
+    // bytes have to agree with it before this reaches storage.
+    if (!matchesDeclaredType(file.buffer, file.mimetype)) {
+      throw new UnsupportedProofFileTypeError(`${file.mimetype} (content does not match)`);
     }
 
     const order = await this.prisma.order.findFirst({ where: { id: orderId, customerId } });

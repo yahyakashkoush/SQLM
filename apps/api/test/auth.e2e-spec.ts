@@ -67,7 +67,35 @@ describe('Auth (e2e)', () => {
 
   afterAll(async () => {
     await prisma.staff.deleteMany({ where: { id: { in: [ownerId, agentId] } } });
-    await prisma.customer.deleteMany({ where: { telegramUsername: 'e2e_test_user' } });
+
+    // Orders reference customers, so anything this telegram id accumulated
+    // in an earlier run has to go first or the delete hits the FK.
+    const stale = await prisma.customer.findMany({
+      where: { telegramUsername: 'e2e_test_user' },
+      select: { id: true },
+    });
+    const staleIds = stale.map((c) => c.id);
+    if (staleIds.length > 0) {
+      const staleOrders = await prisma.order.findMany({
+        where: { customerId: { in: staleIds } },
+        select: { id: true },
+      });
+      const orderIds = staleOrders.map((o) => o.id);
+      await prisma.delivery.deleteMany({ where: { orderId: { in: orderIds } } });
+      await prisma.paymentProof.deleteMany({ where: { orderId: { in: orderIds } } });
+      await prisma.orderEvent.deleteMany({ where: { orderId: { in: orderIds } } });
+      await prisma.orderItem.deleteMany({ where: { orderId: { in: orderIds } } });
+      await prisma.inventoryItem.updateMany({
+        where: { orderId: { in: orderIds } },
+        data: { orderId: null },
+      });
+      await prisma.ticketMessage.deleteMany({
+        where: { ticket: { customerId: { in: staleIds } } },
+      });
+      await prisma.supportTicket.deleteMany({ where: { customerId: { in: staleIds } } });
+      await prisma.order.deleteMany({ where: { id: { in: orderIds } } });
+      await prisma.customer.deleteMany({ where: { id: { in: staleIds } } });
+    }
     await app?.close();
   });
 

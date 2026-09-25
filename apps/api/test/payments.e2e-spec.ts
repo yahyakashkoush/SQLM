@@ -8,6 +8,16 @@ import { AppModule } from '../src/app.module';
 import { configureApp } from '../src/bootstrap';
 import { PrismaService } from '../src/modules/prisma/prisma.service';
 
+
+/** A minimal but genuinely valid PNG — the upload path verifies magic bytes, not just the declared type. */
+function pngBytes(): Buffer {
+  return Buffer.from([
+    0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52,
+    0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00, 0x00, 0x1f, 0x15, 0xc4,
+    0x89,
+  ]);
+}
+
 describe('Payments + Payment Proofs (e2e)', () => {
   let app: INestApplication;
   let prisma: PrismaService;
@@ -147,7 +157,7 @@ describe('Payments + Payment Proofs (e2e)', () => {
       const uploadRes = await request(app.getHttpServer())
         .post(`/api/v1/orders/${orderId}/payment-proof`)
         .set('Authorization', `Bearer ${token}`)
-        .attach('file', Buffer.from('fake-image-bytes'), {
+        .attach('file', pngBytes(), {
           filename: 'receipt.png',
           contentType: 'image/png',
         })
@@ -162,7 +172,7 @@ describe('Payments + Payment Proofs (e2e)', () => {
       await request(app.getHttpServer())
         .post(`/api/v1/orders/${orderId}/payment-proof`)
         .set('Authorization', `Bearer ${token}`)
-        .attach('file', Buffer.from('fake-image-bytes-2'), {
+        .attach('file', pngBytes(), {
           filename: 'receipt2.png',
           contentType: 'image/png',
         })
@@ -192,7 +202,7 @@ describe('Payments + Payment Proofs (e2e)', () => {
       const upload = await request(app.getHttpServer())
         .post(`/api/v1/orders/${orderId}/payment-proof`)
         .set('Authorization', `Bearer ${token}`)
-        .attach('file', Buffer.from('receipt'), { filename: 'r.png', contentType: 'image/png' });
+        .attach('file', pngBytes(), { filename: 'r.png', contentType: 'image/png' });
 
       await request(app.getHttpServer())
         .post(`/api/v1/admin/payment-proofs/${upload.body.id}/approve`)
@@ -209,7 +219,7 @@ describe('Payments + Payment Proofs (e2e)', () => {
       const upload = await request(app.getHttpServer())
         .post(`/api/v1/orders/${orderId}/payment-proof`)
         .set('Authorization', `Bearer ${token}`)
-        .attach('file', Buffer.from('receipt'), { filename: 'r.png', contentType: 'image/png' });
+        .attach('file', pngBytes(), { filename: 'r.png', contentType: 'image/png' });
 
       const [a, b] = await Promise.all([
         request(app.getHttpServer())
@@ -236,7 +246,7 @@ describe('Payments + Payment Proofs (e2e)', () => {
       const upload = await request(app.getHttpServer())
         .post(`/api/v1/orders/${orderId}/payment-proof`)
         .set('Authorization', `Bearer ${token}`)
-        .attach('file', Buffer.from('receipt'), { filename: 'r.png', contentType: 'image/png' });
+        .attach('file', pngBytes(), { filename: 'r.png', contentType: 'image/png' });
 
       await request(app.getHttpServer())
         .post(`/api/v1/admin/payment-proofs/${upload.body.id}/reject`)
@@ -251,7 +261,7 @@ describe('Payments + Payment Proofs (e2e)', () => {
       await request(app.getHttpServer())
         .post(`/api/v1/orders/${orderId}/payment-proof`)
         .set('Authorization', `Bearer ${token}`)
-        .attach('file', Buffer.from('receipt-2'), { filename: 'r2.png', contentType: 'image/png' })
+        .attach('file', pngBytes(), { filename: 'r2.png', contentType: 'image/png' })
         .expect(201);
     });
 
@@ -263,7 +273,7 @@ describe('Payments + Payment Proofs (e2e)', () => {
       const upload = await request(app.getHttpServer())
         .post(`/api/v1/orders/${orderId}/payment-proof`)
         .set('Authorization', `Bearer ${token}`)
-        .attach('file', Buffer.from('receipt'), { filename: 'r.png', contentType: 'image/png' });
+        .attach('file', pngBytes(), { filename: 'r.png', contentType: 'image/png' });
 
       await request(app.getHttpServer())
         .post(`/api/v1/admin/payment-proofs/${upload.body.id}/reject`)
@@ -283,7 +293,7 @@ describe('Payments + Payment Proofs (e2e)', () => {
       const upload = await request(app.getHttpServer())
         .post(`/api/v1/orders/${orderId}/payment-proof`)
         .set('Authorization', `Bearer ${token}`)
-        .attach('file', Buffer.from('receipt'), { filename: 'r.png', contentType: 'image/png' });
+        .attach('file', pngBytes(), { filename: 'r.png', contentType: 'image/png' });
 
       const res = await request(app.getHttpServer())
         .get(`/api/v1/admin/payment-proofs/${upload.body.id}/view-url`)

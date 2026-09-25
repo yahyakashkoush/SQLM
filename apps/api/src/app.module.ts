@@ -24,6 +24,7 @@ import { DeliveryQueueModule } from './modules/delivery/delivery-queue.module';
 import { NotificationsModule } from './modules/notifications/notifications.module';
 import { SupportModule } from './modules/support/support.module';
 import { AdminModule } from './modules/admin/admin.module';
+import { CleanupModule } from './modules/cleanup/cleanup.module';
 
 @Module({
   imports: [
@@ -36,7 +37,17 @@ import { AdminModule } from './modules/admin/admin.module';
       pinoHttp: {
         level: process.env.LOG_LEVEL ?? 'info',
         autoLogging: true,
-        redact: ['req.headers.authorization', 'req.headers.cookie'],
+        // req.url carries ?access_token=... on the SSE routes (EventSource
+        // cannot set headers), so it is redacted alongside the usual
+        // credential headers — otherwise every log line would leak a
+        // usable staff token.
+        redact: [
+          'req.headers.authorization',
+          'req.headers.cookie',
+          'req.headers["x-telegram-bot-api-secret-token"]',
+          'req.query.access_token',
+          'req.url',
+        ],
         transport:
           process.env.NODE_ENV !== 'production'
             ? { target: 'pino-pretty', options: { singleLine: true } }
@@ -80,6 +91,7 @@ import { AdminModule } from './modules/admin/admin.module';
     NotificationsModule,
     SupportModule,
     AdminModule,
+    CleanupModule,
   ],
   controllers: [AppController],
   providers: [{ provide: APP_GUARD, useClass: ThrottlerGuard }],

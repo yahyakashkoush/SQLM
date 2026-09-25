@@ -1,3 +1,4 @@
+import { timingSafeEqual } from 'node:crypto';
 import {
   BadRequestException,
   Controller,
@@ -25,6 +26,15 @@ const UPDATE_ID_CLAIM_TTL_SECONDS = 24 * 60 * 60;
  * — that all happens in the worker (`TelegramUpdateProcessor`) consuming
  * the `telegram-updates` queue.
  */
+/** Constant-time comparison so a wrong secret can't be recovered by timing the response. */
+function safeEqual(a: string | undefined, b: string): boolean {
+  if (!a) return false;
+  const left = Buffer.from(a);
+  const right = Buffer.from(b);
+  if (left.length !== right.length) return false;
+  return timingSafeEqual(left, right);
+}
+
 @Controller('telegram')
 export class TelegramWebhookController {
   private readonly logger = new Logger(TelegramWebhookController.name);
@@ -43,7 +53,7 @@ export class TelegramWebhookController {
     @Body() update: Update,
   ): Promise<{ ok: true }> {
     const expectedSecret = this.config.get<string>('TELEGRAM_WEBHOOK_SECRET');
-    if (!expectedSecret || secret !== expectedSecret || headerSecret !== expectedSecret) {
+    if (!expectedSecret || !safeEqual(secret, expectedSecret) || !safeEqual(headerSecret, expectedSecret)) {
       throw new ForbiddenException('Invalid webhook secret');
     }
 

@@ -342,12 +342,23 @@ describe('Orders + Checkout (e2e)', () => {
         ['DELIVERED'],
         ['COMPLETED'],
       ];
+      // Since Phase 9, reaching PAID hands the order to fulfillment, which
+      // advances PROCESSING -> READY_FOR_DELIVERY (and DELIVERED when every
+      // item is automatic) on its own. So each step is applied only if the
+      // order is not already at or past it — a 409 here would mean the
+      // system already did that step, which is not a failure.
       for (const [toStatus] of path) {
-        await request(app.getHttpServer())
+        const current = await request(app.getHttpServer())
+          .get(`/api/v1/admin/orders/${orderId}`)
+          .set('Authorization', `Bearer ${adminToken}`)
+          .expect(200);
+        if (current.body.status === toStatus) continue;
+
+        const res = await request(app.getHttpServer())
           .post(`/api/v1/admin/orders/${orderId}/transition`)
           .set('Authorization', `Bearer ${adminToken}`)
-          .send({ toStatus })
-          .expect(201);
+          .send({ toStatus });
+        expect([201, 409]).toContain(res.status);
       }
 
       const final = await request(app.getHttpServer())
