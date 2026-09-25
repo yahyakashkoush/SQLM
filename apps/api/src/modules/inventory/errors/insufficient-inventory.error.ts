@@ -1,10 +1,16 @@
+import { HttpStatus } from '@nestjs/common';
+import { DomainError } from '../../../common/errors/domain.error';
+
 /**
  * Thrown by the reservation primitives when there isn't enough stock to
- * satisfy a request. Deliberately not a NestJS HTTP exception — this error
- * crosses a transaction boundary inside OrdersService (Phase 5), which
- * decides how to translate it into a customer-facing response.
+ * satisfy a request. Deliberately not a NestJS HTTP exception at the throw
+ * site — this crosses a transaction boundary inside OrdersService, deep
+ * inside a Prisma transaction with no HTTP context — but `AllExceptionsFilter`
+ * recognizes `DomainError` and maps it to `httpStatus` automatically.
  */
-export class InsufficientInventoryError extends Error {
+export class InsufficientInventoryError extends DomainError {
+  readonly httpStatus = HttpStatus.CONFLICT;
+
   constructor(
     public readonly productId: string,
     public readonly requested: number,

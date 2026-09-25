@@ -102,7 +102,7 @@ PAID → PROCESSING → READY_FOR_DELIVERY → DELIVERED → COMPLETED`, with
 | Operation | Mechanism |
 |---|---|
 | Telegram update delivery | Redis `SET NX EX` on `update_id`, plus a unique DB constraint on `TelegramUpdateLog.updateId` as a second line of defense |
-| Checkout / order creation | Client-supplied `Idempotency-Key` header, cached response in Redis (24h) keyed by `customerId + key` |
+| Checkout / order creation | Client-supplied `idempotencyKey` in the checkout body, enforced by a DB-level unique constraint on `(customerId, idempotencyKey)` — a sequential retry looks it up and replays the same order; a *true concurrent* double-submit races to insert, and the loser catches the constraint violation (Postgres `P2002`) and re-fetches the winner's order instead of erroring |
 | Payment proof upload | Unique partial index: one non-terminal `PaymentProof` per order; re-upload replaces the pending row instead of duplicating |
 | Inventory reservation | `SELECT ... FOR UPDATE SKIP LOCKED` inside a serializable-enough transaction; reservation count is re-checked against `Product.stock`/available items before commit |
 | Admin payment approval | Optimistic status guard (`WHERE status = 'PENDING'`) on the update — a second concurrent approval affects 0 rows and is reported as a conflict, not a double-transition |

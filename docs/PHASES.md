@@ -11,7 +11,7 @@ the end of every phase instead.
 | 2 | Database + Prisma + core domain models | ✅ done |
 | 3 | Authentication + RBAC | ✅ done |
 | 4 | Products + categories + inventory | ✅ done |
-| 5 | Orders + checkout + order state machine | pending |
+| 5 | Orders + checkout + order state machine | ✅ done |
 | 6 | Manual payments + payment proofs | pending |
 | 7 | Telegram Bot adapter | pending |
 | 8 | Telegram Mini App | pending |
@@ -209,3 +209,59 @@ rather than by weakening the test.
 **Verification (all green):**
 - New `apps/api/test/catalog-inventory.e2e-spec.ts` (12 tests) against live Postgres/Redis, including the two that matter most for a commerce platform: **N concurrent reservation attempts against 3 available individual inventory items** (8 attempts → exactly 3 succeed, 5 throw `InsufficientInventoryError`, 0 left `AVAILABLE`, exactly 3 `RESERVED`) and the same shape for **QUANTITY-mode stock** (8 concurrent decrement attempts against `stock=3` → exactly 3 succeed, final `stock === 0`, never negative). Also: draft-product 404 on public routes then visible after publish, duplicate category slug rejection, permission denial for a role without `products.write`, bulk import + list-never-exposes-secret + reveal-is-audited.
 - `pnpm typecheck` — 10/10. `pnpm lint` — 10/10. `pnpm test` — all pass. `pnpm test:e2e` — 23/23. `pnpm build` — 7/7.
+
+**CI infrastructure notes (found by watching the PR's checks, not by local testing):** every push through Phase 4 was actually red in CI despite all-green local verification — two separate bugs local runs couldn't surface. (1) `pnpm/action-setup@v4` now errors on redundant explicit `version` input alongside `package.json`'s `packageManager` field. (2) Turborepo 2.x defaults to strict env mode: `turbo.json` only allowlisted `NODE_ENV`, so every var CI's workflow set (`DATABASE_URL`, `JWT_ACCESS_SECRET`, ...) was stripped before reaching `test:e2e`'s child process — masked locally because `@nestjs/config` reads the physical `.env` file directly, bypassing whatever turbo does or doesn't pass through. Fixed both (`globalPassThroughEnv` now lists every runtime var) and verified the second fix the only way that actually proves it: removed `.env` locally, exported CI's exact variables into the shell, reran `test:e2e` — 34/34 still pass. Lesson for the rest of this build: a fully-green local run does not mean CI is green — check the PR's actual CI status after every push, not just local output.
+
+## Phase 5 — Orders + checkout + order state machine ✅
+
+**Scope:** `modules/orders/order-state-machine.ts` is the single source of
+truth for legal transitions (`ORDER_TRANSITIONS` table); `OrdersService.transition()`
+is the *only* code path allowed to write `Order.status` — it validates the
+transition, updates the row, and writes an `OrderEvent` together, always,
+plus side effects that can never be forgotten because they live in the same
+place: releasing reserved inventory (both `InventoryItem`→`AVAILABLE` and
+`Product.stock` increment) on any transition into `CANCELLED`, and marking
+individual items `SOLD` on transition into `PAID`. `CANCELLED` is reachable
+only from pre-payment-approval states in the transition table, which is what
+lets the release logic run unconditionally on cancellation with no separate
+"was this already sold" check — the state machine already guarantees it.
+
+`OrdersService.checkout()` is the full orchestration: idempotency check
+(`(customerId, idempotencyKey)` lookup) → payment method validation →
+product purchasability + same-currency validation → server-computed
+totals (client-sent prices are never trusted) → one Prisma transaction that
+creates the `Order`, snapshots `OrderItem`s (name/price/delivery type at
+time of purchase, so later product edits can't retroactively change a past
+order), reserves inventory via Phase 4's primitives (mode-appropriate:
+`reserveIndividualItems` or `reserveQuantity`), and transitions
+`CREATED → PENDING_PAYMENT` — all atomic, so a failed reservation rolls
+back everything, including the `Order` row itself. **True concurrent
+double-submits** (not just sequential retries) are handled by catching the
+`(customerId, idempotencyKey)` unique constraint violation (Postgres error
+`P2002`) when two requests race past the initial idempotency check
+simultaneously: the loser re-fetches and returns the winner's order instead
+of erroring.
+
+Introduced `DomainError` (`common/errors/domain.error.ts`): a base class for
+service-layer errors that cross a transaction boundary with no HTTP context
+of their own (`InsufficientInventoryError`, `ProductNotPurchasableError`,
+`PaymentMethodUnavailableError`, `InvalidOrderTransitionError`).
+`AllExceptionsFilter` now recognizes it and maps to the error's own declared
+status instead of logging it as an unexpected 500 — one central place
+instead of try/catch boilerplate in every controller.
+
+No persisted `Cart` entity: the Mini App (Phase 8) owns cart state
+client-side and submits the full item list at checkout, matching how
+`checkoutRequestSchema` was already shaped back in Phase 1.
+
+**Verification (all green) — `apps/api/test/orders.e2e-spec.ts`, 13 new tests against live Postgres/Redis:**
+- Checkout creates `PENDING_PAYMENT` order with server-computed totals and real inventory reservation.
+- Idempotent replay (same key, sequential) returns the identical order — confirmed via DB row count, not just the HTTP response.
+- **True concurrent double-tap** (`Promise.all`, same idempotency key) still produces exactly one order and exactly one reservation — this is the `P2002`-catch path, and it's exercised for real, not just unit-reasoned about.
+- Insufficient inventory → 409, and — critically — the transaction rollback is verified to leave *zero* partial reservations behind, not just reject the request.
+- Disabled payment method → 400; DRAFT (non-purchasable) product → 409.
+- Order ownership isolation: a customer gets 404 (not 403 — existence isn't leaked) on another customer's order.
+- Full happy-path walk (`PENDING_PAYMENT → ... → COMPLETED`, 7 staff-driven transitions) with an audit trail assertion on the resulting `OrderEvent` rows.
+- Invalid transition (state-skipping) → 409.
+- Cancellation releases reservations correctly for **both** inventory modes, independently verified (individual items back to `AVAILABLE` with `orderId` cleared; `QUANTITY` stock incremented back).
+- `pnpm typecheck` — 10/10. `pnpm lint` — 10/10. `pnpm test` — all pass. `pnpm test:e2e` — 34/34. `pnpm build` — 7/7.
