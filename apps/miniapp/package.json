@@ -15,7 +15,6 @@
     "react-dom": "^19.0.0",
     "@sqlm/ui": "workspace:*",
     "@sqlm/shared": "workspace:*",
-    "@telegram-apps/sdk-react": "^2.0.20",
     "lucide-react": "^0.462.0",
     "@tanstack/react-query": "^5.62.2",
     "zustand": "^5.0.2"
