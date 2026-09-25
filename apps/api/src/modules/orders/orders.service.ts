@@ -2,6 +2,7 @@ import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { Prisma, type Order } from '@prisma/client';
 import type { OrderStatus, PaginatedResult } from '@sqlm/shared';
 import { PrismaService } from '../prisma/prisma.service';
+import { NotificationDispatcher } from '../notifications/notification-dispatcher.service';
 import { InventoryService } from '../inventory/inventory.service';
 import { InsufficientInventoryError } from '../inventory/errors/insufficient-inventory.error';
 import { assertTransitionAllowed } from './order-state-machine';
@@ -28,6 +29,7 @@ export class OrdersService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly inventory: InventoryService,
+    private readonly notifications: NotificationDispatcher,
   ) {}
 
   /**
@@ -122,6 +124,11 @@ export class OrdersService {
       });
 
       this.logger.log(`Checkout created order ${order.id} for customer ${customerId}`);
+      await this.notifications.notifyStaff({
+        kind: 'order.created',
+        orderId: order.id,
+        summary: `New order #${order.sequenceNumber} — ${order.total} ${order.currency}`,
+      });
       return order;
     } catch (err) {
       if (
@@ -189,6 +196,14 @@ export class OrdersService {
     if (toStatus === 'PAID') {
       await this.inventory.markIndividualItemsSold(tx, orderId);
     }
+
+    // Best-effort: dispatcher swallows its own failures, so an unreachable
+    // queue/stream can never roll back the transition itself.
+    await this.notifications.notifyCustomer(order.customerId, {
+      kind: 'order.status_changed',
+      orderId,
+      summary: `Order #${updated.sequenceNumber} is now ${toStatus.replace(/_/g, ' ').toLowerCase()}`,
+    });
 
     return updated;
   }

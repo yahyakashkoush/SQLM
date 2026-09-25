@@ -124,6 +124,22 @@ enum PaymentProofStatus {
   REJECTED
 }
 
+/// How a given order item actually got fulfilled. Derived from the
+/// product's DeliveryType + InventoryMode at fulfillment time (see
+/// DeliveryService.resolveMethod), not stored on the product — a product
+/// configured AUTOMATIC but backed by QUANTITY stock has no secret to hand
+/// over, so it resolves to MANUAL rather than silently delivering nothing.
+enum DeliveryMethod {
+  AUTOMATIC
+  MANUAL
+}
+
+enum DeliveryStatus {
+  PENDING
+  DELIVERED
+  FAILED
+}
+
 enum TicketStatus {
   OPEN
   IN_PROGRESS
@@ -168,6 +184,7 @@ model Staff {
   assignedTickets  SupportTicket[]     @relation("TicketAssignedTo")
   authoredMessages TicketMessage[]     @relation("MessageAuthorStaff")
   orderEvents      OrderEvent[]        @relation("OrderEventActorStaff")
+  fulfilledDeliveries Delivery[]       @relation("DeliveryFulfilledBy")
   auditLogs        AuditLog[]
   updatedSettings  PlatformSetting[]
 
@@ -326,6 +343,7 @@ model Order {
   paymentProofs  PaymentProof[]
   inventoryItems InventoryItem[]
   supportTickets SupportTicket[]
+  deliveries     Delivery[]
 
   @@unique([customerId, idempotencyKey])
   @@index([customerId, status])
@@ -345,6 +363,8 @@ model OrderItem {
   unitPrice               Decimal         @db.Decimal(12, 2)
   quantity                Int
   createdAt               DateTime        @default(now())
+
+  delivery Delivery?
 
   @@index([orderId])
   @@index([productId])
@@ -369,6 +389,35 @@ model OrderEvent {
 
   @@index([orderId])
   @@map("order_events")
+}
+
+/// One fulfillment record per order item. `encryptedContent` uses the same
+/// AES-256-GCM wire format as InventoryItem.encryptedPayload, so delivered
+/// credentials are never at rest in plaintext. The unique constraint on
+/// orderItemId is what makes re-running a delivery job a no-op instead of a
+/// second delivery.
+model Delivery {
+  id                 String         @id @default(uuid())
+  orderId            String
+  order              Order          @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  orderItemId        String         @unique
+  orderItem          OrderItem      @relation(fields: [orderItemId], references: [id], onDelete: Cascade)
+  inventoryItemIds   String[]       @default([])
+  method             DeliveryMethod
+  status             DeliveryStatus @default(PENDING)
+  encryptedContent   String?
+  note               String?
+  attempts           Int            @default(0)
+  lastError          String?
+  deliveredAt        DateTime?
+  deliveredByStaffId String?
+  deliveredByStaff   Staff?         @relation("DeliveryFulfilledBy", fields: [deliveredByStaffId], references: [id], onDelete: SetNull)
+  createdAt          DateTime       @default(now())
+  updatedAt          DateTime       @updatedAt
+
+  @@index([orderId])
+  @@index([status, method])
+  @@map("deliveries")
 }
 
 // =============================================================================
@@ -432,6 +481,12 @@ model SupportTicket {
   order           Order?         @relation(fields: [orderId], references: [id], onDelete: SetNull)
   assignedStaffId String?
   assignedStaff   Staff?         @relation("TicketAssignedTo", fields: [assignedStaffId], references: [id], onDelete: SetNull)
+  /// Unread counters are maintained atomically alongside message inserts
+  /// (increment for the other side, reset to 0 for the author's side), so a
+  /// badge count never needs a COUNT(*) over messages on every list call.
+  customerUnread  Int            @default(0)
+  staffUnread     Int            @default(0)
+  lastMessageAt   DateTime?
   createdAt       DateTime       @default(now())
   updatedAt       DateTime       @updatedAt
   closedAt        DateTime?
@@ -454,6 +509,7 @@ model TicketMessage {
   authorCustomer   Customer?     @relation("MessageAuthorCustomer", fields: [authorCustomerId], references: [id], onDelete: SetNull)
   message          String
   attachments      Json?
+  internal         Boolean       @default(false)
   createdAt        DateTime      @default(now())
 
   @@index([ticketId])

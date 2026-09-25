@@ -4,10 +4,14 @@ import type { InventoryItem, Prisma } from '@prisma/client';
 import { encryptSecret, decryptSecret, type PaginatedResult } from '@sqlm/shared';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
+import { NotificationDispatcher } from '../notifications/notification-dispatcher.service';
 import { InsufficientInventoryError } from './errors/insufficient-inventory.error';
 import type { InventoryQueryDto } from './dto/inventory-query.dto';
 
 type PrismaTx = Prisma.TransactionClient;
+
+/** Staff get a heads-up at this many remaining units. */
+const LOW_STOCK_THRESHOLD = 3;
 
 @Injectable()
 export class InventoryService {
@@ -17,6 +21,7 @@ export class InventoryService {
     private readonly prisma: PrismaService,
     private readonly config: ConfigService,
     private readonly audit: AuditService,
+    private readonly notifications: NotificationDispatcher,
   ) {}
 
   private get encryptionKey(): string {
@@ -140,7 +145,25 @@ export class InventoryService {
       data: { status: 'RESERVED', reservedAt: new Date(), orderId },
     });
 
-    return tx.inventoryItem.findMany({ where: { id: { in: ids } } });
+    const reserved = await tx.inventoryItem.findMany({ where: { id: { in: ids } } });
+    await this.alertIfLowStock(tx, productId);
+    return reserved;
+  }
+
+  /** Warns staff while there is still time to restock, not after the product goes dark. */
+  private async alertIfLowStock(tx: PrismaTx, productId: string): Promise<void> {
+    const remaining = await tx.inventoryItem.count({ where: { productId, status: 'AVAILABLE' } });
+    if (remaining > LOW_STOCK_THRESHOLD) return;
+
+    const product = await tx.product.findUnique({
+      where: { id: productId },
+      select: { name: true },
+    });
+    await this.notifications.notifyStaff({
+      kind: 'inventory.low_stock',
+      productId,
+      summary: `Low stock: ${product?.name ?? productId} has ${remaining} item(s) left`,
+    });
   }
 
   /**

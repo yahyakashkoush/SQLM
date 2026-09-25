@@ -4,6 +4,7 @@ import { Bot, type Context } from 'grammy';
 import type { Update } from 'grammy/types';
 import { CustomersService } from '../customers/customers.service';
 import { OrdersService } from '../orders/orders.service';
+import { SupportService } from '../support/support.service';
 import { MAIN_MENU_LABELS, buildMainMenuKeyboard, buildWebAppButton } from './keyboards/main-menu.keyboard';
 import { withTimeout } from '../../common/utils/with-timeout';
 
@@ -31,6 +32,7 @@ export class TelegramBotService implements OnModuleInit {
     private readonly config: ConfigService,
     private readonly customers: CustomersService,
     private readonly orders: OrdersService,
+    private readonly support: SupportService,
   ) {
     const token = this.config.get<string>('TELEGRAM_BOT_TOKEN') || 'unset:unset';
     this.bot = new Bot(token);
@@ -98,6 +100,20 @@ export class TelegramBotService implements OnModuleInit {
     await this.bot.handleUpdate(update);
   }
 
+  /**
+   * Outbound push (order updates, support replies). Throws on failure so
+   * the calling queue job retries rather than silently dropping a message
+   * the customer is waiting on; a bot that never initialized is a no-op
+   * instead, since retrying that can't help.
+   */
+  async sendMessage(telegramId: bigint, text: string): Promise<void> {
+    if (!this.ready) {
+      this.logger.warn(`Skipping outbound message to ${telegramId} — bot not initialized`);
+      return;
+    }
+    await this.bot.api.sendMessage(Number(telegramId), text);
+  }
+
   private registerHandlers(): void {
     this.bot.command('start', async (ctx) => {
       await this.upsertCustomer(ctx);
@@ -146,6 +162,27 @@ export class TelegramBotService implements OnModuleInit {
 
     this.bot.hears(MAIN_MENU_LABELS.ACCOUNT, async (ctx) => this.replyWithAccount(ctx));
     this.bot.command('account', async (ctx) => this.replyWithAccount(ctx));
+
+    // Anything the customer types that isn't a menu label or command is
+    // treated as a support message, so the bot doubles as the support
+    // channel: it lands in the same thread the Admin Dashboard answers in.
+    const menuLabels = new Set<string>(Object.values(MAIN_MENU_LABELS));
+    this.bot.on('message:text', async (ctx) => {
+      const text = ctx.message.text.trim();
+      if (!text || text.startsWith('/') || menuLabels.has(text)) return;
+
+      const customer = await this.upsertCustomer(ctx);
+      if (!customer) return;
+
+      const ticket = await this.support.findOrCreateActiveTicket(
+        customer.id,
+        'Telegram conversation',
+        text,
+      );
+      await ctx.reply(
+        `🎫 Added to support ticket #${ticket.ticketNumber}. Our team will reply here.`,
+      );
+    });
 
     this.bot.catch((err) => {
       this.logger.error(`Unhandled error processing update ${err.ctx.update.update_id}`, err.error);

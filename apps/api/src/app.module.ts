@@ -19,6 +19,10 @@ import { PaymentsModule } from './modules/payments/payments.module';
 import { QueueModule } from './modules/queue/queue.module';
 import { CustomersModule } from './modules/customers/customers.module';
 import { TelegramModule } from './modules/telegram/telegram.module';
+import { DeliveryModule } from './modules/delivery/delivery.module';
+import { DeliveryQueueModule } from './modules/delivery/delivery-queue.module';
+import { NotificationsModule } from './modules/notifications/notifications.module';
+import { SupportModule } from './modules/support/support.module';
 
 @Module({
   imports: [
@@ -59,6 +63,7 @@ import { TelegramModule } from './modules/telegram/telegram.module';
     PrismaModule,
     RedisModule,
     QueueModule,
+    DeliveryQueueModule,
     HealthModule,
     CustomersModule,
     AuthModule,
@@ -70,6 +75,9 @@ import { TelegramModule } from './modules/telegram/telegram.module';
     StorageModule,
     PaymentsModule,
     TelegramModule,
+    DeliveryModule,
+    NotificationsModule,
+    SupportModule,
   ],
   controllers: [AppController],
   providers: [{ provide: APP_GUARD, useClass: ThrottlerGuard }],

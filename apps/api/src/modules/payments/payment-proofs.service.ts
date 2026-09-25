@@ -1,6 +1,8 @@
 import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { nanoid } from 'nanoid';
 import { PrismaService } from '../prisma/prisma.service';
+import { DeliveryDispatcher } from '../delivery/delivery-dispatcher.service';
+import { NotificationDispatcher } from '../notifications/notification-dispatcher.service';
 import { StorageService } from '../storage/storage.service';
 import { OrdersService } from '../orders/orders.service';
 import {
@@ -26,6 +28,8 @@ export class PaymentProofsService {
     private readonly prisma: PrismaService,
     private readonly storage: StorageService,
     private readonly orders: OrdersService,
+    private readonly delivery: DeliveryDispatcher,
+    private readonly notifications: NotificationDispatcher,
   ) {}
 
   /**
@@ -80,6 +84,11 @@ export class PaymentProofsService {
     });
 
     this.logger.log(`Payment proof ${proof.id} uploaded for order ${orderId}`);
+    await this.notifications.notifyStaff({
+      kind: 'payment.submitted',
+      orderId,
+      summary: `Payment proof submitted for order ${orderId} — awaiting review`,
+    });
     return proof;
   }
 
@@ -114,7 +123,7 @@ export class PaymentProofsService {
 
   /** Atomic: the PENDING->APPROVED guard and the order transition to PAID happen in one transaction, so two admins racing to approve the same proof can't both succeed. */
   async approve(proofId: string, staffId: string) {
-    return this.prisma.$transaction(async (tx) => {
+    const result = await this.prisma.$transaction(async (tx) => {
       const proof = await tx.paymentProof.findUnique({ where: { id: proofId } });
       if (!proof) throw new NotFoundException('Payment proof not found');
 
@@ -136,6 +145,16 @@ export class PaymentProofsService {
 
       return tx.paymentProof.findUniqueOrThrow({ where: { id: proofId } });
     });
+
+    // After commit, never inside it: a worker can pick the job up
+    // immediately and must see the committed PAID row.
+    await this.delivery.dispatch(result.orderId);
+    await this.notifications.notifyStaff({
+      kind: 'payment.reviewed',
+      orderId: result.orderId,
+      summary: `Payment approved for order ${result.orderId}`,
+    });
+    return result;
   }
 
   async reject(proofId: string, staffId: string, reason: string, cancelOrder: boolean) {
