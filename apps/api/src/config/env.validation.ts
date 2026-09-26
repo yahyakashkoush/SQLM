@@ -37,11 +37,11 @@ export const envSchema = z.object({
   TELEGRAM_WEBHOOK_SECRET: optionalString(z.string().min(1)),
   TELEGRAM_WEBHOOK_URL: optionalString(z.string().url()),
 
-  S3_ENDPOINT: z.string().min(1),
+  S3_ENDPOINT: optionalString(z.string().min(1)),
   S3_REGION: z.string().default('us-east-1'),
-  S3_ACCESS_KEY_ID: z.string().min(1),
-  S3_SECRET_ACCESS_KEY: z.string().min(1),
-  S3_BUCKET: z.string().min(1),
+  S3_ACCESS_KEY_ID: optionalString(z.string().min(1)),
+  S3_SECRET_ACCESS_KEY: optionalString(z.string().min(1)),
+  S3_BUCKET: optionalString(z.string().min(1)),
   S3_FORCE_PATH_STYLE: z.coerce.boolean().default(true),
   S3_PUBLIC_URL: optionalString(),
 

@@ -18,6 +18,7 @@ const EMPTY = {
   slug: '',
   name: '',
   shortDescription: '',
+  description: '',
   price: '0',
   currency: 'USD',
   stock: 0,
@@ -29,6 +30,10 @@ const EMPTY = {
   categoryId: '',
   duration: '',
   warranty: '',
+  images: '',
+  compareAtPrice: '',
+  tags: '',
+  featured: false,
 };
 
 export default function ProductsPage() {
@@ -52,12 +57,20 @@ export default function ProductsPage() {
 
   const save = useMutation({
     mutationFn: () => {
-      // Strip empty optional strings so the API's validators don't reject them.
+      const { id: _id, createdAt: _ca, updatedAt: _ua, availableStock: _as, category: _cat, ...rest } = form;
       const payload = Object.fromEntries(
-        Object.entries(form).filter(([, v]) => v !== '' && v !== null),
+        Object.entries(rest).filter(([, v]) => v !== '' && v !== null && v !== false),
       );
       payload.price = String(payload.price ?? '0');
       payload.stock = Number(payload.stock ?? 0);
+      if (typeof payload.images === 'string') {
+        payload.images = (payload.images as string).split(',').map((s: string) => s.trim()).filter(Boolean);
+      }
+      if (typeof payload.tags === 'string') {
+        payload.tags = (payload.tags as string).split(',').map((s: string) => s.trim()).filter(Boolean);
+      }
+      if (payload.compareAtPrice) payload.compareAtPrice = String(payload.compareAtPrice);
+      if (form.featured) payload.featured = true;
       return editing?.id ? api.updateProduct(editing.id, payload) : api.createProduct(payload);
     },
     onSuccess: close,
@@ -146,6 +159,18 @@ export default function ProductsPage() {
               </div>
             </div>
             {field('shortDescription', 'Short description')}
+            {field('description', 'Full description')}
+            {field('images', 'Image URLs (comma-separated)')}
+            {field('compareAtPrice', 'Compare-at price (original before discount)')}
+            {field('tags', 'Tags (comma-separated)')}
+            <label className="flex items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                checked={Boolean(form.featured)}
+                onChange={(e) => setForm({ ...form, featured: e.target.checked })}
+              />
+              Featured product
+            </label>
             {error && <p className="text-sm text-destructive">{error}</p>}
             <div className="flex gap-2">
               <Button size="sm" disabled={save.isPending} onClick={() => save.mutate()}>
@@ -193,7 +218,17 @@ export default function ProductsPage() {
                 variant="outline"
                 onClick={() => {
                   setEditing(r);
-                  setForm({ ...r, categoryId: r.categoryId ?? '' });
+                  setForm({
+                    ...r,
+                    categoryId: r.categoryId ?? '',
+                    images: (r.images ?? []).join(', '),
+                    tags: (r.tags ?? []).join(', '),
+                    compareAtPrice: r.compareAtPrice ?? '',
+                    description: r.description ?? '',
+                    shortDescription: r.shortDescription ?? '',
+                    duration: r.duration ?? '',
+                    warranty: r.warranty ?? '',
+                  });
                 }}
               >
                 Edit

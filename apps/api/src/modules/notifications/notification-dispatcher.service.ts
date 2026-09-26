@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bullmq';
 import type { Queue } from 'bullmq';
 import { QUEUE_NAMES } from '../queue/queue-names';
+import { PrismaService } from '../prisma/prisma.service';
 import { RealtimeService } from './realtime.service';
 
 export type NotificationKind =
@@ -15,7 +16,9 @@ export type NotificationKind =
   | 'support.ticket_created'
   | 'support.customer_reply'
   | 'support.staff_reply'
-  | 'support.ticket_closed';
+  | 'support.ticket_closed'
+  | 'broadcast'
+  | 'product.new';
 
 export interface NotificationPayload {
   kind: NotificationKind;
@@ -48,6 +51,7 @@ export class NotificationDispatcher {
   constructor(
     @InjectQueue(QUEUE_NAMES.NOTIFICATIONS) private readonly queue: Queue<NotificationJob>,
     private readonly realtime: RealtimeService,
+    private readonly prisma: PrismaService,
   ) {}
 
   async notifyStaff(payload: NotificationPayload): Promise<void> {
@@ -58,6 +62,20 @@ export class NotificationDispatcher {
   async notifyCustomer(customerId: string, payload: NotificationPayload): Promise<void> {
     this.realtime.publishToCustomer(customerId, { ...payload, audience: 'CUSTOMER', customerId });
     await this.enqueue({ ...payload, audience: 'CUSTOMER', customerId });
+  }
+
+  async broadcastToAllCustomers(payload: NotificationPayload): Promise<number> {
+    const customers = await this.prisma.customer.findMany({
+      where: { status: 'ACTIVE' },
+      select: { id: true },
+    });
+    let sent = 0;
+    for (const customer of customers) {
+      await this.notifyCustomer(customer.id, payload);
+      sent++;
+    }
+    this.logger.log(`Broadcast "${payload.kind}" to ${sent} customers`);
+    return sent;
   }
 
   private async enqueue(job: NotificationJob): Promise<void> {

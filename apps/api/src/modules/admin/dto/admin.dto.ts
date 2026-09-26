@@ -1,5 +1,6 @@
 import { Type } from 'class-transformer';
 import {
+  IsDefined,
   IsEmail,
   IsIn,
   IsInt,
@@ -93,8 +94,15 @@ export class UpdateStaffDto {
 }
 
 export class UpdateSettingDto {
-  /** Free-form JSON: settings are admin-defined, not a fixed schema. */
+  @IsDefined()
   value!: unknown;
+}
+
+export class BroadcastNotificationDto {
+  @IsString()
+  @MinLength(1)
+  @MaxLength(2000)
+  message!: string;
 }
 
 export class StaffIdParamDto {

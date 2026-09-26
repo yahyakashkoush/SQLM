@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import {
+  Bell,
   Boxes,
   ClipboardList,
   CreditCard,
@@ -33,6 +34,7 @@ const NAV: Array<{ href: string; label: string; icon: typeof Package; permission
   { href: '/payment-methods', label: 'Payment Methods', icon: CreditCard, permission: 'payments.methods.read' },
   { href: '/customers', label: 'Customers', icon: Users, permission: 'customers.read' },
   { href: '/staff', label: 'Staff & Roles', icon: UserCog, permission: 'staff.read' },
+  { href: '/notifications', label: 'Notifications', icon: Bell, permission: 'settings.write' },
   { href: '/audit-logs', label: 'Audit Logs', icon: FileText, permission: 'audit_logs.read' },
   { href: '/settings', label: 'Settings', icon: Settings, permission: 'settings.read' },
 ];

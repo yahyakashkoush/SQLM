@@ -37,8 +37,9 @@ export default function PaymentMethodsPage() {
 
   const save = useMutation({
     mutationFn: () => {
+      const { id: _id, createdAt: _ca, updatedAt: _ua, ...rest } = form;
       const payload = Object.fromEntries(
-        Object.entries(form).filter(([, v]) => v !== '' && v !== null),
+        Object.entries(rest).filter(([, v]) => v !== '' && v !== null),
       );
       payload.displayOrder = Number(payload.displayOrder ?? 0);
       return editing?.id ? api.updatePaymentMethod(editing.id, payload) : api.createPaymentMethod(payload);

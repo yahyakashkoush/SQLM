@@ -2,6 +2,7 @@ import { Body, Controller, Get, Param, Patch, Post, Query, UseGuards } from '@ne
 import { AdminService } from './admin.service';
 import {
   AuditLogQueryDto,
+  BroadcastNotificationDto,
   CreateStaffDto,
   CustomerQueryDto,
   UpdateSettingDto,
@@ -11,11 +12,15 @@ import { JwtStaffAuthGuard } from '../rbac/guards/jwt-staff-auth.guard';
 import { PermissionsGuard } from '../rbac/guards/permissions.guard';
 import { Permissions } from '../rbac/decorators/permissions.decorator';
 import { CurrentStaff, type AuthenticatedStaff } from '../rbac/decorators/current-staff.decorator';
+import { NotificationDispatcher } from '../notifications/notification-dispatcher.service';
 
 @Controller('admin')
 @UseGuards(JwtStaffAuthGuard, PermissionsGuard)
 export class AdminController {
-  constructor(private readonly admin: AdminService) {}
+  constructor(
+    private readonly admin: AdminService,
+    private readonly notifications: NotificationDispatcher,
+  ) {}
 
   @Get('stats')
   @Permissions('analytics.read')
@@ -77,5 +82,15 @@ export class AdminController {
     @CurrentStaff() staff: AuthenticatedStaff,
   ) {
     return this.admin.updateSetting(key, dto, staff.id);
+  }
+
+  @Post('notifications/broadcast')
+  @Permissions('settings.write')
+  async broadcast(@Body() dto: BroadcastNotificationDto) {
+    const sent = await this.notifications.broadcastToAllCustomers({
+      kind: 'broadcast',
+      summary: dto.message,
+    });
+    return { sent };
   }
 }

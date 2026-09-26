@@ -2,7 +2,7 @@
 
 import { use, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ORDER_STATUSES } from '@sqlm/shared';
+import { ORDER_TRANSITIONS, type OrderStatus } from '@sqlm/shared';
 import { Badge, Button, Card, CardContent, Input, Separator } from '@sqlm/ui';
 import { api, ApiError } from '@/lib/api';
 import { PageHeader } from '@/components/layout/page-header';
@@ -102,30 +102,52 @@ export default function OrderDetailPage({ params }: { params: Promise<{ id: stri
 
       <Card className="mt-6">
         <CardContent className="p-4">
-          <p className="mb-2 text-sm font-medium">Change status</p>
-          <p className="mb-3 text-xs text-muted-foreground">
-            Only transitions the order state machine allows will succeed — invalid ones are rejected
-            by the server.
-          </p>
+          <p className="mb-2 text-sm font-medium">Order Actions</p>
           <Input
             placeholder="Note (optional, recorded in the order's audit trail)"
             value={note}
             onChange={(e) => setNote(e.target.value)}
             className="mb-3"
           />
-          <div className="flex flex-wrap gap-1.5">
-            {ORDER_STATUSES.filter((s) => s !== order.status).map((s) => (
-              <Button
-                key={s}
-                size="sm"
-                variant="outline"
-                disabled={transition.isPending}
-                onClick={() => transition.mutate(s)}
-              >
-                {s.replace(/_/g, ' ').toLowerCase()}
-              </Button>
-            ))}
-          </div>
+          {(() => {
+            const allowed = ORDER_TRANSITIONS[order.status as OrderStatus] ?? [];
+            if (!allowed.length) return <p className="text-sm text-muted-foreground">No actions available — terminal state.</p>;
+            const labels: Record<string, string> = {
+              PENDING_PAYMENT: 'Request Payment',
+              PAYMENT_SUBMITTED: 'Mark Payment Submitted',
+              PAYMENT_REVIEW: 'Send to Review',
+              PAID: 'Approve Payment',
+              PROCESSING: 'Start Processing',
+              READY_FOR_DELIVERY: 'Mark Ready for Delivery',
+              DELIVERED: 'Mark Delivered',
+              COMPLETED: 'Complete Order',
+              CANCELLED: 'Cancel Order',
+              REFUNDED: 'Refund Order',
+              DISPUTED: 'Mark Disputed',
+            };
+            const variants: Record<string, 'default' | 'outline' | 'destructive'> = {
+              PAID: 'default',
+              COMPLETED: 'default',
+              CANCELLED: 'destructive',
+              REFUNDED: 'destructive',
+              DISPUTED: 'destructive',
+            };
+            return (
+              <div className="flex flex-wrap gap-1.5">
+                {allowed.map((s) => (
+                  <Button
+                    key={s}
+                    size="sm"
+                    variant={variants[s] ?? 'outline'}
+                    disabled={transition.isPending}
+                    onClick={() => transition.mutate(s)}
+                  >
+                    {labels[s] ?? s.replace(/_/g, ' ').toLowerCase()}
+                  </Button>
+                ))}
+              </div>
+            );
+          })()}
           {error && <p className="mt-3 text-sm text-destructive">{error}</p>}
         </CardContent>
       </Card>

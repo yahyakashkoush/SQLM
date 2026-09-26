@@ -145,6 +145,8 @@ export const api = {
   settings: () => get<SettingRow[]>('/admin/settings'),
   updateSetting: (key: string, value: unknown) => patch(`/admin/settings/${key}`, { value }),
 
+  broadcast: (message: string) => post<{ sent: number }>('/admin/notifications/broadcast', { message }),
+
   roles: () => get<Array<{ role: string; permissions: string[] }>>('/rbac/roles'),
 };
 
@@ -177,6 +179,7 @@ export interface AdminProduct {
   duration: string | null;
   warranty: string | null;
   tags: string[];
+  images: string[];
 }
 
 export interface AdminCategory {
