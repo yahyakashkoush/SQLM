@@ -44,3 +44,6 @@ infra/data/
 # misc
 *.pem
 .eslintcache
+
+# redis
+dump.rdb
