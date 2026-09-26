@@ -29,6 +29,7 @@ x-api-env: &api-env
   S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY:-}
   S3_BUCKET: ${S3_BUCKET:-}
   S3_PUBLIC_URL: ${S3_PUBLIC_URL:-}
+  LOCAL_STORAGE_DIR: /repo/uploads
   API_BASE_URL: https://${API_DOMAIN:?API_DOMAIN is required}
   CORS_ORIGINS: ${CORS_ORIGINS:?CORS_ORIGINS is required in production}
   MINIAPP_URL: ${MINIAPP_URL:?MINIAPP_URL is required}
@@ -94,7 +95,7 @@ services:
     expose:
       - '4000'
     volumes:
-      - storage_data:/repo/apps/api/storage-data
+      - uploads:/repo/uploads
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -108,6 +109,8 @@ services:
     restart: unless-stopped
     environment: *api-env
     command: ['node', '--enable-source-maps', 'apps/api/dist/worker.js']
+    volumes:
+      - uploads:/repo/uploads
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -178,6 +181,6 @@ services:
 volumes:
   pg_data:
   redis_data:
-  storage_data:
+  uploads:
   caddy_data:
   caddy_config:

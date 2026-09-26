@@ -19,17 +19,17 @@ export function ProductCard({ product }: { product: Product }) {
             />
           ) : (
             <div className="flex h-full items-center justify-center text-xs text-muted-foreground">
-              No image
+              لا توجد صورة
             </div>
           )}
           {product.featured && (
-            <Badge variant="warning" className="absolute left-2 top-2">
-              Featured
+            <Badge variant="warning" className="absolute start-2 top-2">
+              عرض
             </Badge>
           )}
           {outOfStock && (
             <div className="absolute inset-0 flex items-center justify-center bg-background/80 text-xs font-medium">
-              Out of stock
+              نفدت الكمية
             </div>
           )}
         </div>
@@ -42,7 +42,7 @@ export function ProductCard({ product }: { product: Product }) {
             <span className="text-sm font-semibold">
               {formatMoney(product.price, product.currency)}
             </span>
-            {product.compareAtPrice && (
+            {product.compareAtPrice && Number(product.compareAtPrice) > Number(product.price) && (
               <span className="text-xs text-muted-foreground line-through">
                 {formatMoney(product.compareAtPrice, product.currency)}
               </span>

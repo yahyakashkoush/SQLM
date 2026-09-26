@@ -1,3 +1,4 @@
+import './common/bigint-json';
 import 'reflect-metadata';
 import helmet from 'helmet';
 import compression from 'compression';

@@ -41,6 +41,9 @@ ENV PRISMA_QUERY_ENGINE_LIBRARY=/repo/node_modules/.pnpm/@prisma+client@5.22.0_p
 RUN groupadd -r sqlm && useradd -r -m -g sqlm sqlm
 
 COPY --from=build --chown=sqlm:sqlm /repo /repo
+# Mount point for the uploads volume. It must exist in the image, owned by
+# the runtime user, or Docker creates it root-owned and every write fails.
+RUN mkdir -p /repo/uploads && chown sqlm:sqlm /repo/uploads
 
 USER sqlm
 EXPOSE 4000

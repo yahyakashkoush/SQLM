@@ -1,5 +1,6 @@
 import { Type } from 'class-transformer';
 import {
+  IsBoolean,
   IsDefined,
   IsEmail,
   IsIn,
@@ -101,8 +102,18 @@ export class UpdateSettingDto {
 export class BroadcastNotificationDto {
   @IsString()
   @MinLength(1)
-  @MaxLength(2000)
+  @MaxLength(4000)
   message!: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(2000)
+  imageUrl?: string;
+
+  /** Adds an "open the store" button under the message. */
+  @IsOptional()
+  @IsBoolean()
+  withStoreButton?: boolean;
 }
 
 export class StaffIdParamDto {

@@ -1,18 +1,37 @@
 import { Keyboard, InlineKeyboard } from 'grammy';
 
-/** Persistent bottom menu — spec §5's "Main Bot Menu". Every button either
- * replies with a quick text summary or opens the Mini App, which is where
- * the actual shopping experience lives (spec §5, §2). */
+/** Persistent bottom menu. Every button either replies with a short summary or opens the Mini App. */
 export const MAIN_MENU_LABELS = {
-  HOME: '🏠 Home',
-  PRODUCTS: '🛍️ Products',
-  OFFERS: '🔥 Offers',
-  SEARCH: '🔎 Search',
-  ORDERS: '📦 My Orders',
-  PAYMENT: '💳 Payment',
-  SUPPORT: '🎫 Support',
-  ACCOUNT: '👤 My Account',
+  HOME: '🏠 المتجر',
+  PRODUCTS: '🛍️ المنتجات',
+  OFFERS: '🔥 العروض',
+  SEARCH: '🔎 بحث',
+  ORDERS: '📦 طلباتي',
+  PAYMENT: '💳 الدفع',
+  SUPPORT: '🎫 الدعم',
+  ACCOUNT: '👤 حسابي',
 } as const;
+
+export type MainMenuAction = keyof typeof MAIN_MENU_LABELS;
+
+/** Customers who opened the bot before the Arabic menu still have these buttons on screen. */
+const LEGACY_LABELS: Record<string, MainMenuAction> = {
+  '🏠 Home': 'HOME',
+  '🛍️ Products': 'PRODUCTS',
+  '🔥 Offers': 'OFFERS',
+  '🔎 Search': 'SEARCH',
+  '📦 My Orders': 'ORDERS',
+  '💳 Payment': 'PAYMENT',
+  '🎫 Support': 'SUPPORT',
+  '👤 My Account': 'ACCOUNT',
+};
+
+export const MENU_ACTION_BY_LABEL: Record<string, MainMenuAction> = {
+  ...LEGACY_LABELS,
+  ...Object.fromEntries(
+    Object.entries(MAIN_MENU_LABELS).map(([action, label]) => [label, action as MainMenuAction]),
+  ),
+};
 
 export function buildMainMenuKeyboard(): Keyboard {
   return new Keyboard()
@@ -27,7 +46,8 @@ export function buildMainMenuKeyboard(): Keyboard {
     .row()
     .text(MAIN_MENU_LABELS.SUPPORT)
     .text(MAIN_MENU_LABELS.ACCOUNT)
-    .resized();
+    .resized()
+    .persistent();
 }
 
 export function buildWebAppButton(text: string, url: string): InlineKeyboard {

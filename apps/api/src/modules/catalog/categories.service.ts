@@ -1,5 +1,6 @@
 import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { slugify, uniqueSlug } from '../../common/utils/slug';
 import type { CreateCategoryDto } from './dto/create-category.dto';
 import type { UpdateCategoryDto } from './dto/update-category.dto';
 
@@ -38,9 +39,12 @@ export class CategoriesService {
   }
 
   async create(dto: CreateCategoryDto) {
-    await this.assertSlugAvailable(dto.slug);
+    if (dto.slug) await this.assertSlugAvailable(dto.slug);
+    else dto.slug = await uniqueSlug(slugify(dto.name), async (slug) =>
+      Boolean(await this.prisma.category.findUnique({ where: { slug } })),
+    );
     if (dto.parentId) await this.findById(dto.parentId);
-    return this.prisma.category.create({ data: dto });
+    return this.prisma.category.create({ data: { ...dto, slug: dto.slug! } });
   }
 
   async update(id: string, dto: UpdateCategoryDto) {

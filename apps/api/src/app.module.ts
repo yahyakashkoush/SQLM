@@ -1,3 +1,4 @@
+import './common/bigint-json';
 import { Module } from '@nestjs/common';
 import { APP_GUARD } from '@nestjs/core';
 import { ConfigModule, ConfigService } from '@nestjs/config';
@@ -25,6 +26,7 @@ import { NotificationsModule } from './modules/notifications/notifications.modul
 import { SupportModule } from './modules/support/support.module';
 import { AdminModule } from './modules/admin/admin.module';
 import { CleanupModule } from './modules/cleanup/cleanup.module';
+import { SettingsModule } from './modules/settings/settings.module';
 
 @Module({
   imports: [
@@ -73,6 +75,7 @@ import { CleanupModule } from './modules/cleanup/cleanup.module';
       ],
     }),
     PrismaModule,
+    SettingsModule,
     RedisModule,
     QueueModule,
     DeliveryQueueModule,

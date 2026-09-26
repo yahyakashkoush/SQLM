@@ -44,6 +44,11 @@ export const envSchema = z.object({
   S3_BUCKET: optionalString(z.string().min(1)),
   S3_FORCE_PATH_STYLE: z.coerce.boolean().default(true),
   S3_PUBLIC_URL: optionalString(),
+  /** Where the local-filesystem storage fallback writes when S3 is not configured. */
+  LOCAL_STORAGE_DIR: optionalString(),
+  /** Public origin of this API, used to build links to stored files. */
+  API_BASE_URL: optionalString(),
+  MINIAPP_URL: optionalString(),
 
   SENTRY_DSN: optionalString(),
   LOG_LEVEL: z.string().default('info'),

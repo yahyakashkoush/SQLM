@@ -14,6 +14,7 @@ const SIGNATURES: Record<string, Array<{ offset: number; bytes: number[] }>> = {
     { offset: 0, bytes: [0x52, 0x49, 0x46, 0x46] },
     { offset: 8, bytes: [0x57, 0x45, 0x42, 0x50] },
   ],
+  'image/gif': [{ offset: 0, bytes: [0x47, 0x49, 0x46, 0x38] }],
   'application/pdf': [{ offset: 0, bytes: [0x25, 0x50, 0x44, 0x46, 0x2d] }],
 };
 

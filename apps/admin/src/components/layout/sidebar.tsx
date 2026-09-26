@@ -4,11 +4,14 @@ import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import {
   Bell,
+  Bot,
   Boxes,
   ClipboardList,
   CreditCard,
   FileText,
+  FolderTree,
   LayoutDashboard,
+  LayoutTemplate,
   LifeBuoy,
   LogOut,
   Package,
@@ -30,13 +33,16 @@ const NAV: Array<{ href: string; label: string; icon: typeof Package; permission
   { href: '/deliveries', label: 'Deliveries', icon: Truck, permission: 'delivery.read' },
   { href: '/support', label: 'Support', icon: LifeBuoy, permission: 'support.read' },
   { href: '/products', label: 'Products', icon: Package, permission: 'products.read' },
+  { href: '/categories', label: 'Categories', icon: FolderTree, permission: 'categories.read' },
   { href: '/inventory', label: 'Inventory', icon: Boxes, permission: 'inventory.read' },
+  { href: '/delivery-templates', label: 'Delivery Templates', icon: LayoutTemplate, permission: 'delivery.read' },
   { href: '/payment-methods', label: 'Payment Methods', icon: CreditCard, permission: 'payments.methods.read' },
   { href: '/customers', label: 'Customers', icon: Users, permission: 'customers.read' },
-  { href: '/staff', label: 'Staff & Roles', icon: UserCog, permission: 'staff.read' },
-  { href: '/notifications', label: 'Notifications', icon: Bell, permission: 'settings.write' },
-  { href: '/audit-logs', label: 'Audit Logs', icon: FileText, permission: 'audit_logs.read' },
+  { href: '/notifications', label: 'Broadcast', icon: Bell, permission: 'settings.write' },
+  { href: '/bot', label: 'Telegram Bot', icon: Bot, permission: 'settings.read' },
   { href: '/settings', label: 'Settings', icon: Settings, permission: 'settings.read' },
+  { href: '/staff', label: 'Staff & Roles', icon: UserCog, permission: 'staff.read' },
+  { href: '/audit-logs', label: 'Audit Logs', icon: FileText, permission: 'audit_logs.read' },
 ];
 
 export function Sidebar() {

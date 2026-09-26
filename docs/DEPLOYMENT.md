@@ -64,6 +64,26 @@ curl -fsS -H "Authorization: Bearer $STAFF_TOKEN" https://$API_DOMAIN/api/v1/adm
 so `docker compose ps` shows `unhealthy` for a container that is running
 but cannot reach its dependencies.
 
+### Automatic deploys from git
+
+`.github/workflows/deploy.yml` deploys every push to the production branch:
+it SSHes into the host, checks out the pushed commit in `/opt/sqlm`, and
+runs `docker compose -f docker-compose.prod.yml up -d --build` (migrations
+included). One-time setup, all in the GitHub web UI under
+**Settings → Secrets and variables → Actions → New repository secret**:
+
+| Secret | Value |
+| --- | --- |
+| `EC2_HOST` | The server's public IP or hostname |
+| `EC2_USER` | SSH user (`ubuntu` on Ubuntu AMIs) |
+| `EC2_SSH_KEY` | Full contents of the `.pem` private key |
+
+Until those exist the workflow is skipped. A manual run is available from
+the Actions tab (**Deploy → Run workflow**).
+
+Uploaded files (payment proofs, product images) live in the `uploads`
+volume when S3 is not configured, so they survive rebuilds.
+
 ## Rollback
 
 Roll back the **application**, then decide about the schema — in that order.

@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Param, Patch, Post, UseGuards } from '@nestjs/common';
 import { DeliveryService } from './delivery.service';
 import { DeliveryDispatcher } from './delivery-dispatcher.service';
 import { FulfillDeliveryDto } from './dto/fulfill-delivery.dto';
@@ -35,6 +35,28 @@ export class AdminDeliveryController {
     @CurrentStaff() staff: AuthenticatedStaff,
   ) {
     return this.delivery.fulfillManually(id, staff.id, dto.content, dto.note);
+  }
+
+  @Patch(':id')
+  @Permissions('delivery.fulfill')
+  replace(
+    @Param('id') id: string,
+    @Body() dto: FulfillDeliveryDto,
+    @CurrentStaff() staff: AuthenticatedStaff,
+  ) {
+    return this.delivery.replaceDeliveredContent(id, staff.id, dto.content, dto.note);
+  }
+
+  @Post(':id/resend')
+  @Permissions('delivery.fulfill')
+  resend(@Param('id') id: string) {
+    return this.delivery.resend(id);
+  }
+
+  @Get(':id/content')
+  @Permissions('delivery.fulfill')
+  content(@Param('id') id: string) {
+    return this.delivery.revealForAdmin(id);
   }
 
   /** Re-drives fulfillment for an order whose automatic delivery failed or was never enqueued. */

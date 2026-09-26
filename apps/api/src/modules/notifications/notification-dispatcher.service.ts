@@ -27,6 +27,12 @@ export interface NotificationPayload {
   orderId?: string;
   ticketId?: string;
   productId?: string;
+  /** Delivered-item notifications render the credentials at send time from this row, so they never sit in Redis. */
+  deliveryId?: string;
+  imageUrl?: string;
+  button?: { text: string; url: string };
+  /** Realtime only — no Telegram push (for intermediate states the customer doesn't need a message about). */
+  silent?: boolean;
   [key: string]: unknown;
 }
 
@@ -61,6 +67,7 @@ export class NotificationDispatcher {
 
   async notifyCustomer(customerId: string, payload: NotificationPayload): Promise<void> {
     this.realtime.publishToCustomer(customerId, { ...payload, audience: 'CUSTOMER', customerId });
+    if (payload.silent) return;
     await this.enqueue({ ...payload, audience: 'CUSTOMER', customerId });
   }
 
@@ -69,13 +76,15 @@ export class NotificationDispatcher {
       where: { status: 'ACTIVE' },
       select: { id: true },
     });
-    let sent = 0;
-    for (const customer of customers) {
-      await this.notifyCustomer(customer.id, payload);
-      sent++;
+    const jobs = customers.map((c) => ({
+      name: payload.kind,
+      data: { ...payload, audience: 'CUSTOMER' as const, customerId: c.id },
+    }));
+    for (let i = 0; i < jobs.length; i += 500) {
+      await this.queue.addBulk(jobs.slice(i, i + 500));
     }
-    this.logger.log(`Broadcast "${payload.kind}" to ${sent} customers`);
-    return sent;
+    this.logger.log(`Broadcast "${payload.kind}" to ${jobs.length} customers`);
+    return jobs.length;
   }
 
   private async enqueue(job: NotificationJob): Promise<void> {

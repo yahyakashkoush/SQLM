@@ -1,11 +1,15 @@
 import { useAuthStore } from '@/store/auth-store';
 import type {
   Category,
+  CustomerDelivery,
   CustomerProfile,
   Order,
   PaginatedResult,
   PaymentMethod,
   Product,
+  StoreInfo,
+  Ticket,
+  TicketThread,
 } from '@/types/api';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000';
@@ -33,8 +37,9 @@ async function request<T>(path: string, init: RequestInit = {}, auth = false): P
   const res = await fetch(`${API_URL}/api/v1${path}`, { ...init, headers, cache: 'no-store' });
 
   if (!res.ok) {
-    const body = await res.json().catch(() => ({ message: res.statusText }));
-    throw new ApiError(res.status, body.message ?? 'Request failed');
+    const body = (await res.json().catch(() => ({ message: res.statusText }))) as { message?: string | string[] };
+    const message = Array.isArray(body.message) ? body.message.join('، ') : body.message;
+    throw new ApiError(res.status, message ?? 'حصل خطأ، حاول مرة أخرى');
   }
   if (res.status === 204) return undefined as T;
   return res.json() as Promise<T>;
@@ -70,6 +75,17 @@ export const api = {
 
   listOrders: () => request<PaginatedResult<Order>>('/orders', {}, true),
   getOrder: (id: string) => request<Order>(`/orders/${id}`, {}, true),
+
+  getDeliveries: (orderId: string) => request<CustomerDelivery[]>(`/orders/${orderId}/deliveries`, {}, true),
+
+  storeInfo: () => request<StoreInfo>('/store'),
+
+  listTickets: () => request<PaginatedResult<Ticket>>('/support/tickets', {}, true),
+  getTicket: (id: string) => request<TicketThread>(`/support/tickets/${id}`, {}, true),
+  createTicket: (payload: { subject: string; message: string; category?: string; orderId?: string }) =>
+    request<Ticket>('/support/tickets', { method: 'POST', body: JSON.stringify(payload) }, true),
+  replyTicket: (id: string, message: string) =>
+    request(`/support/tickets/${id}/messages`, { method: 'POST', body: JSON.stringify({ message }) }, true),
 
   uploadPaymentProof: (orderId: string, file: File) => {
     const form = new FormData();

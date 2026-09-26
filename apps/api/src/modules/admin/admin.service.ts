@@ -4,6 +4,7 @@ import * as argon2 from 'argon2';
 import type { Role } from '@sqlm/shared';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
+import { SettingsService } from '../settings/settings.service';
 import type {
   AuditLogQueryDto,
   CreateStaffDto,
@@ -18,6 +19,7 @@ export class AdminService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
+    private readonly settings: SettingsService,
   ) {}
 
   /** Single round-trip for the dashboard landing page. */
@@ -214,7 +216,7 @@ export class AdminService {
   }
 
   async listSettings() {
-    return this.prisma.platformSetting.findMany({ orderBy: { key: 'asc' } });
+    return this.settings.listForAdmin();
   }
 
   async updateSetting(key: string, dto: UpdateSettingDto, actorStaffId: string) {
@@ -223,6 +225,7 @@ export class AdminService {
       create: { key, value: dto.value as never, updatedByStaffId: actorStaffId },
       update: { value: dto.value as never, updatedByStaffId: actorStaffId },
     });
+    this.settings.invalidate();
 
     await this.audit.log({
       actorStaffId,

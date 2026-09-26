@@ -19,6 +19,12 @@ export class OrderQueryDto {
   @IsOptional()
   @IsIn(ORDER_STATUSES)
   status?: OrderStatus;
+
+  /** Admin only: order number, or customer name / @username. */
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  search?: string;
 }
 
 export class TransitionOrderDto {

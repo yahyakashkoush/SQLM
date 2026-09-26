@@ -80,6 +80,7 @@ export class DeliveryService {
 
     let delivered = 0;
     let manual = 0;
+    const newlyDelivered: string[] = [];
 
     for (const item of order.items) {
       const method = DeliveryService.resolveMethod(
@@ -99,18 +100,16 @@ export class DeliveryService {
       }
 
       const ok = await this.deliverAutomatically(record.id, orderId, item.id, item.quantity);
-      if (ok) delivered += 1;
-      else manual += 1;
+      if (ok) {
+        delivered += 1;
+        newlyDelivered.push(record.id);
+      } else manual += 1;
     }
 
     await this.advanceOrderAfterFulfillment(orderId);
 
-    if (delivered > 0) {
-      await this.notifications.notifyCustomer(order.customerId, {
-        kind: 'delivery.completed',
-        orderId,
-        summary: `Order #${order.sequenceNumber}: ${delivered} item(s) delivered — open the app to view them`,
-      });
+    for (const deliveryId of newlyDelivered) {
+      await this.notifyDelivered(order.customerId, orderId, order.sequenceNumber, deliveryId);
     }
     if (manual > 0) {
       await this.notifications.notifyStaff({
@@ -315,12 +314,75 @@ export class DeliveryService {
     });
 
     await this.advanceOrderAfterFulfillment(delivery.orderId);
-    await this.notifications.notifyCustomer(order.customerId, {
-      kind: 'delivery.completed',
-      orderId: delivery.orderId,
-      summary: `Order #${order.sequenceNumber}: your item is ready — open the app to view it`,
-    });
+    await this.notifyDelivered(order.customerId, delivery.orderId, order.sequenceNumber, deliveryId);
     return updated;
+  }
+
+  /**
+   * Replaces what a delivered item hands over (a warranty replacement, a
+   * corrected password) and re-sends it to the customer.
+   */
+  async replaceDeliveredContent(deliveryId: string, staffId: string, content: string, note?: string) {
+    const delivery = await this.prisma.delivery.findUnique({ where: { id: deliveryId }, include: { order: true } });
+    if (!delivery) throw new NotFoundException('Delivery not found');
+    if (delivery.status !== 'DELIVERED') throw new DeliveryNotFulfillableError(delivery.orderId, delivery.status);
+
+    const updated = await this.prisma.$transaction(async (tx) => {
+      await tx.orderEvent.create({
+        data: {
+          orderId: delivery.orderId,
+          type: 'NOTE_ADDED',
+          actorType: 'STAFF',
+          actorStaffId: staffId,
+          note: `Delivery details replaced${note ? `: ${note}` : ''}`,
+        },
+      });
+      return tx.delivery.update({
+        where: { id: deliveryId },
+        data: {
+          encryptedContent: encryptSecret(content, this.encryptionKey),
+          note: note ?? delivery.note,
+          deliveredByStaffId: staffId,
+          deliveredAt: new Date(),
+        },
+      });
+    });
+    await this.notifyDelivered(delivery.order.customerId, delivery.orderId, delivery.order.sequenceNumber, deliveryId);
+    return updated;
+  }
+
+  /** Sends the delivery message again (customer lost it, deleted the chat, ...). */
+  async resend(deliveryId: string): Promise<{ ok: true }> {
+    const delivery = await this.prisma.delivery.findUnique({ where: { id: deliveryId }, include: { order: true } });
+    if (!delivery) throw new NotFoundException('Delivery not found');
+    if (delivery.status !== 'DELIVERED') throw new DeliveryNotFulfillableError(delivery.orderId, delivery.status);
+    await this.notifyDelivered(delivery.order.customerId, delivery.orderId, delivery.order.sequenceNumber, deliveryId);
+    return { ok: true };
+  }
+
+  /** Staff view of what was handed over — decrypted on demand only. */
+  async revealForAdmin(deliveryId: string): Promise<{ content: string | null }> {
+    const delivery = await this.prisma.delivery.findUnique({ where: { id: deliveryId } });
+    if (!delivery) throw new NotFoundException('Delivery not found');
+    return {
+      content: delivery.encryptedContent ? decryptSecret(delivery.encryptedContent, this.encryptionKey) : null,
+    };
+  }
+
+  private async notifyDelivered(
+    customerId: string,
+    orderId: string,
+    orderNumber: number,
+    deliveryId: string,
+  ): Promise<void> {
+    const miniAppUrl = (this.config.get<string>('MINIAPP_URL') || 'http://localhost:3200').replace(/\/$/, '');
+    await this.notifications.notifyCustomer(customerId, {
+      kind: 'delivery.completed',
+      orderId,
+      deliveryId,
+      summary: `✅ تم تسليم طلبك #${orderNumber} — افتح صفحة الطلب لعرض البيانات.`,
+      button: { text: '📦 عرض الطلب', url: `${miniAppUrl}/orders/${orderId}` },
+    });
   }
 
   /** Customer-facing: decrypts only their own delivered content. */
@@ -353,7 +415,10 @@ export class DeliveryService {
   async listPendingManual() {
     return this.prisma.delivery.findMany({
       where: { method: 'MANUAL', status: { not: 'DELIVERED' } },
-      include: { order: true, orderItem: true },
+      include: {
+        order: { include: { customer: true } },
+        orderItem: { include: { product: { select: { id: true, deliveryTemplateId: true, activationInstructions: true } } } },
+      },
       orderBy: { createdAt: 'asc' },
     });
   }
@@ -361,7 +426,10 @@ export class DeliveryService {
   async listForOrderAdmin(orderId: string) {
     return this.prisma.delivery.findMany({
       where: { orderId },
-      include: { orderItem: true },
+      include: {
+        orderItem: { include: { product: { select: { id: true, deliveryTemplateId: true, activationInstructions: true } } } },
+        deliveredByStaff: { select: { id: true, name: true } },
+      },
       orderBy: { createdAt: 'asc' },
     });
   }

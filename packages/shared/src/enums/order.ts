@@ -1,8 +1,8 @@
 /**
  * Order lifecycle. This list is the single source of truth for allowed
  * states — it is mirrored 1:1 in the Prisma `OrderStatus` enum. The allowed
- * *transitions* between these states live in
- * `apps/api/src/modules/orders/order-state-machine.ts`, not here.
+ * *transitions* between these states are
+ * `ORDER_TRANSITIONS` below.
  */
 export const ORDER_STATUSES = [
   'CREATED',
@@ -56,3 +56,19 @@ export const ORDER_EVENT_TYPES = [
 ] as const;
 
 export type OrderEventType = (typeof ORDER_EVENT_TYPES)[number];
+
+/** Customer-facing (Arabic) status names, shared by the bot, notifications and the Mini App. */
+export const ORDER_STATUS_LABELS_AR: Record<OrderStatus, string> = {
+  CREATED: 'تم الإنشاء',
+  PENDING_PAYMENT: 'في انتظار الدفع',
+  PAYMENT_SUBMITTED: 'تم إرسال إثبات الدفع',
+  PAYMENT_REVIEW: 'جاري مراجعة الدفع',
+  PAID: 'تم تأكيد الدفع',
+  PROCESSING: 'جاري التجهيز',
+  READY_FOR_DELIVERY: 'جاهز للتسليم',
+  DELIVERED: 'تم التسليم',
+  COMPLETED: 'مكتمل',
+  CANCELLED: 'ملغي',
+  REFUNDED: 'تم الاسترداد',
+  DISPUTED: 'قيد النزاع',
+};

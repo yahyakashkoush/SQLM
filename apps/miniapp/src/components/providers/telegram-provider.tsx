@@ -53,7 +53,7 @@ export function TelegramProvider({ children }: { children: React.ReactNode }) {
     }
 
     if (!webApp.initData) {
-      setAuthError('No Telegram session data available.');
+      setAuthError('تعذر قراءة بيانات تيليجرام — افتح التطبيق من زر المتجر في البوت.');
       setReady(true);
       return;
     }
@@ -65,7 +65,7 @@ export function TelegramProvider({ children }: { children: React.ReactNode }) {
         setReady(true);
       })
       .catch((err: unknown) => {
-        setAuthError(err instanceof ApiError ? err.message : 'Failed to authenticate.');
+        setAuthError(err instanceof ApiError ? err.message : 'تعذر تسجيل الدخول، أعد فتح التطبيق.');
         setReady(true);
       });
   }, [scriptLoaded, hasSession, setSession]);

@@ -1,3 +1,4 @@
+import { ConfigService } from '@nestjs/config';
 import { Body, Controller, Get, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
 import { AdminService } from './admin.service';
 import {
@@ -20,6 +21,7 @@ export class AdminController {
   constructor(
     private readonly admin: AdminService,
     private readonly notifications: NotificationDispatcher,
+    private readonly config: ConfigService,
   ) {}
 
   @Get('stats')
@@ -87,9 +89,12 @@ export class AdminController {
   @Post('notifications/broadcast')
   @Permissions('settings.write')
   async broadcast(@Body() dto: BroadcastNotificationDto) {
+    const miniAppUrl = this.config.get<string>('MINIAPP_URL', 'http://localhost:3200');
     const sent = await this.notifications.broadcastToAllCustomers({
       kind: 'broadcast',
       summary: dto.message,
+      imageUrl: dto.imageUrl,
+      button: dto.withStoreButton ? { text: '🛍️ افتح المتجر', url: miniAppUrl } : undefined,
     });
     return { sent };
   }

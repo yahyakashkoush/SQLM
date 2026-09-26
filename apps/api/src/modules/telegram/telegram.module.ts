@@ -6,6 +6,8 @@ import { TelegramUpdateProcessor } from './telegram-update.processor';
 import { CustomersModule } from '../customers/customers.module';
 import { OrdersModule } from '../orders/orders.module';
 import { SupportModule } from '../support/support.module';
+import { PaymentsModule } from '../payments/payments.module';
+import { AdminBotController } from './admin-bot.controller';
 import { QUEUE_NAMES } from '../queue/queue-names';
 
 /** Global so the notifications worker can push outbound messages without
@@ -17,8 +19,9 @@ import { QUEUE_NAMES } from '../queue/queue-names';
     CustomersModule,
     OrdersModule,
     SupportModule,
+    PaymentsModule,
   ],
-  controllers: [TelegramWebhookController],
+  controllers: [TelegramWebhookController, AdminBotController],
   providers: [TelegramBotService, TelegramUpdateProcessor],
   exports: [TelegramBotService],
 })

@@ -37,7 +37,7 @@ export const useCartStore = create<CartState>()(
         if (otherCurrency) {
           return {
             ok: false,
-            error: `Your cart already has ${otherCurrency.currency} items — checkout supports one currency at a time. Clear your cart first.`,
+            error: `السلة فيها منتجات بعملة ${otherCurrency.currency} — لازم تكون كل المنتجات بنفس العملة. أكمل طلبك الحالي أو فضّي السلة الأول.`,
           };
         }
 

@@ -4,6 +4,7 @@ import { NotificationDispatcher } from './notification-dispatcher.service';
 import { RealtimeService } from './realtime.service';
 import { NotificationProcessor } from './notification.processor';
 import { RealtimeController } from './realtime.controller';
+import { DeliveryMessageRenderer } from './delivery-message.renderer';
 import { QUEUE_NAMES } from '../queue/queue-names';
 
 /**
@@ -15,7 +16,7 @@ import { QUEUE_NAMES } from '../queue/queue-names';
 @Module({
   imports: [BullModule.registerQueue({ name: QUEUE_NAMES.NOTIFICATIONS })],
   controllers: [RealtimeController],
-  providers: [NotificationDispatcher, RealtimeService, NotificationProcessor],
+  providers: [NotificationDispatcher, RealtimeService, NotificationProcessor, DeliveryMessageRenderer],
   exports: [NotificationDispatcher, RealtimeService],
 })
 export class NotificationsModule {}

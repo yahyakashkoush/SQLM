@@ -108,7 +108,7 @@ export class PaymentProofsService {
     return this.prisma.paymentProof.findMany({
       where: { status: 'PENDING' },
       orderBy: { uploadedAt: 'asc' },
-      include: { order: true, customer: true },
+      include: { order: { include: { paymentMethod: { select: { name: true } } } }, customer: true },
     });
   }
 

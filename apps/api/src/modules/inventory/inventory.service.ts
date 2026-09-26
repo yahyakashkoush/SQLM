@@ -1,4 +1,4 @@
-import { ForbiddenException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import type { InventoryItem, Prisma } from '@prisma/client';
 import { type PaginatedResult } from '@sqlm/shared';
@@ -107,6 +107,25 @@ export class InventoryService {
       where: { id: itemId },
       data: { status: 'DISABLED', disabledReason: reason },
     });
+  }
+
+  /**
+   * Relative, not absolute: an increment can't clobber a reservation that
+   * decremented stock between the admin loading the page and saving.
+   */
+  async adjustStock(productId: string, delta: number): Promise<{ stock: number }> {
+    const product = await this.prisma.product.findUnique({ where: { id: productId } });
+    if (!product) throw new NotFoundException('Product not found');
+    if (product.inventoryMode !== 'QUANTITY') {
+      throw new BadRequestException('This product uses individual items — import them instead');
+    }
+    const result = await this.prisma.product.updateMany({
+      where: { id: productId, stock: { gte: Math.max(0, -delta) } },
+      data: { stock: { increment: delta } },
+    });
+    if (result.count === 0) throw new BadRequestException('Stock cannot go below zero');
+    const updated = await this.prisma.product.findUniqueOrThrow({ where: { id: productId } });
+    return { stock: updated.stock };
   }
 
   async availableCount(productId: string): Promise<number> {

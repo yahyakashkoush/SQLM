@@ -1,5 +1,5 @@
 import { Body, Controller, Get, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
-import { IsString, MaxLength, MinLength } from 'class-validator';
+import { IsInt, IsString, Max, MaxLength, Min, MinLength } from 'class-validator';
 import { InventoryService } from './inventory.service';
 import { ImportInventoryDto } from './dto/import-inventory.dto';
 import { InventoryQueryDto } from './dto/inventory-query.dto';
@@ -15,6 +15,14 @@ class DisableInventoryItemDto {
   reason!: string;
 }
 
+class AdjustStockDto {
+  /** Added to (or, when negative, removed from) a QUANTITY-mode product's stock. */
+  @IsInt()
+  @Min(-100000)
+  @Max(100000)
+  delta!: number;
+}
+
 @Controller('admin/inventory')
 @UseGuards(JwtStaffAuthGuard, PermissionsGuard)
 export class InventoryController {
@@ -24,6 +32,12 @@ export class InventoryController {
   @Permissions('inventory.write')
   bulkImport(@Param('productId') productId: string, @Body() dto: ImportInventoryDto) {
     return this.inventory.bulkImport(productId, dto.secrets);
+  }
+
+  @Post('products/:productId/adjust-stock')
+  @Permissions('inventory.write')
+  adjustStock(@Param('productId') productId: string, @Body() dto: AdjustStockDto) {
+    return this.inventory.adjustStock(productId, dto.delta);
   }
 
   @Get('products/:productId')

@@ -6,8 +6,8 @@ import { StoreHydration } from '@/components/providers/store-hydration';
 import { BottomNav } from '@/components/layout/bottom-nav';
 
 export const metadata: Metadata = {
-  title: 'SQLM Store',
-  description: 'Shop digital products inside Telegram.',
+  title: 'المتجر',
+  description: 'اشتري الاشتراكات والمنتجات الرقمية من جوه تيليجرام.',
 };
 
 export const viewport = {
@@ -19,7 +19,7 @@ export const viewport = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en">
+    <html lang="ar" dir="rtl">
       <body className="min-h-screen antialiased">
         <QueryProvider>
           <StoreHydration />

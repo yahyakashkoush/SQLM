@@ -51,6 +51,7 @@ export interface OrderItem {
   productNameSnapshot: string;
   unitPrice: string;
   quantity: number;
+  product?: { slug: string; images: string[] };
 }
 
 export interface Order {
@@ -63,6 +64,40 @@ export interface Order {
   paymentMethodId: string | null;
   createdAt: string;
   items: OrderItem[];
+  paymentMethod?: PaymentMethod | null;
+  paymentProofs?: Array<{ id: string; status: 'PENDING' | 'APPROVED' | 'REJECTED'; rejectionReason: string | null; uploadedAt: string }>;
+}
+
+export interface CustomerDelivery {
+  id: string;
+  orderItemId: string;
+  productName: string;
+  method: string;
+  status: 'PENDING' | 'DELIVERED' | 'FAILED';
+  content: string | null;
+  note: string | null;
+  deliveredAt: string | null;
+}
+
+export interface StoreInfo {
+  name: string;
+  supportContact: string;
+}
+
+export interface Ticket {
+  id: string;
+  ticketNumber: number;
+  subject: string;
+  status: string;
+  category: string;
+  customerUnread: number;
+  lastMessageAt: string | null;
+  createdAt: string;
+  orderId: string | null;
+}
+
+export interface TicketThread extends Ticket {
+  messages: Array<{ id: string; authorType: 'CUSTOMER' | 'STAFF' | 'SYSTEM'; message: string; createdAt: string }>;
 }
 
 export interface CustomerProfile {

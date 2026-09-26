@@ -2,241 +2,213 @@
 
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import {
-  DELIVERY_TYPES,
-  FULFILLMENT_TYPES,
-  INVENTORY_MODES,
-  PRODUCT_STATUSES,
-  PRODUCT_VISIBILITIES,
-} from '@sqlm/shared';
-import { Badge, Button, Card, CardContent, Input, Label } from '@sqlm/ui';
-import { api, ApiError, type AdminProduct } from '@/lib/api';
+import { Badge, Button, Card, CardContent, Input } from '@sqlm/ui';
+import { api, type AdminProduct } from '@/lib/api';
 import { PageHeader } from '@/components/layout/page-header';
 import { DataTable } from '@/components/data-table';
-
-const EMPTY = {
-  slug: '',
-  name: '',
-  shortDescription: '',
-  description: '',
-  price: '0',
-  currency: 'USD',
-  stock: 0,
-  inventoryMode: 'QUANTITY',
-  deliveryType: 'MANUAL',
-  fulfillmentType: 'MANUAL_SERVICE',
-  status: 'DRAFT',
-  visibility: 'HIDDEN',
-  categoryId: '',
-  duration: '',
-  warranty: '',
-  images: '',
-  compareAtPrice: '',
-  tags: '',
-  featured: false,
-};
+import { Select } from '@/components/form';
+import { ProductForm } from '@/components/product-form';
+import { useAuthStore } from '@/store/auth-store';
 
 export default function ProductsPage() {
   const queryClient = useQueryClient();
+  const can = useAuthStore((s) => s.can);
   const [editing, setEditing] = useState<Partial<AdminProduct> | null>(null);
-  const [form, setForm] = useState<Record<string, unknown>>(EMPTY);
-  const [error, setError] = useState<string | null>(null);
+  const [search, setSearch] = useState('');
+  const [status, setStatus] = useState('');
+  const [categoryId, setCategoryId] = useState('');
+  const [flash, setFlash] = useState<string | null>(null);
 
-  const { data, isLoading, error: loadError } = useQuery({
-    queryKey: ['products'],
-    queryFn: () => api.products('?pageSize=100'),
+  const qs = new URLSearchParams({ pageSize: '100' });
+  if (search.trim()) qs.set('search', search.trim());
+  if (status) qs.set('status', status);
+  if (categoryId) qs.set('categoryId', categoryId);
+
+  const { data, isLoading, error } = useQuery({
+    queryKey: ['products', qs.toString()],
+    queryFn: () => api.products(`?${qs}`),
   });
   const { data: categories } = useQuery({ queryKey: ['categories'], queryFn: () => api.categories() });
+  const { data: settings } = useQuery({ queryKey: ['settings'], queryFn: () => api.settings() });
+  const defaultCurrency = String(
+    settings?.settings.find((s) => s.key === 'store.defaultCurrency')?.value ?? 'USD',
+  );
 
-  const close = () => {
-    setEditing(null);
-    setForm(EMPTY);
-    setError(null);
+  const refresh = () => {
     void queryClient.invalidateQueries({ queryKey: ['products'] });
+    void queryClient.invalidateQueries({ queryKey: ['stats'] });
   };
 
-  const save = useMutation({
-    mutationFn: () => {
-      const { id: _id, createdAt: _ca, updatedAt: _ua, availableStock: _as, category: _cat, ...rest } = form;
-      const payload = Object.fromEntries(
-        Object.entries(rest).filter(([, v]) => v !== '' && v !== null && v !== false),
-      );
-      payload.price = String(payload.price ?? '0');
-      payload.stock = Number(payload.stock ?? 0);
-      if (typeof payload.images === 'string') {
-        payload.images = (payload.images as string).split(',').map((s: string) => s.trim()).filter(Boolean);
-      }
-      if (typeof payload.tags === 'string') {
-        payload.tags = (payload.tags as string).split(',').map((s: string) => s.trim()).filter(Boolean);
-      }
-      if (payload.compareAtPrice) payload.compareAtPrice = String(payload.compareAtPrice);
-      if (form.featured) payload.featured = true;
-      return editing?.id ? api.updateProduct(editing.id, payload) : api.createProduct(payload);
-    },
-    onSuccess: close,
-    onError: (err) => setError(err instanceof ApiError ? err.message : 'Save failed'),
+  const quickUpdate = useMutation({
+    mutationFn: ({ id, body }: { id: string; body: Record<string, unknown> }) => api.updateProduct(id, body),
+    onSuccess: refresh,
   });
+  const archive = useMutation({ mutationFn: (id: string) => api.deleteProduct(id), onSuccess: refresh });
 
-  const field = (key: string, label: string, type = 'text') => (
-    <div className="space-y-1">
-      <Label htmlFor={key}>{label}</Label>
-      <Input
-        id={key}
-        type={type}
-        value={String(form[key] ?? '')}
-        onChange={(e) => setForm({ ...form, [key]: e.target.value })}
-      />
-    </div>
-  );
-
-  const select = (key: string, label: string, options: readonly string[]) => (
-    <div className="space-y-1">
-      <Label htmlFor={key}>{label}</Label>
-      <select
-        id={key}
-        value={String(form[key] ?? '')}
-        onChange={(e) => setForm({ ...form, [key]: e.target.value })}
-        className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
-      >
-        {options.map((o) => (
-          <option key={o} value={o}>
-            {o}
-          </option>
-        ))}
-      </select>
-    </div>
-  );
+  if (editing) {
+    return (
+      <>
+        <PageHeader
+          title={editing.id ? `Edit: ${editing.name}` : 'New product'}
+          description="All fields are editable later."
+        />
+        <ProductForm
+          product={editing.id ? editing : null}
+          defaultCurrency={defaultCurrency}
+          onCancel={() => setEditing(null)}
+          onSaved={(result) => {
+            setEditing(null);
+            setFlash(
+              result.notified ? `Saved — announced to ${result.notified} customers.` : 'Saved.',
+            );
+            refresh();
+          }}
+        />
+      </>
+    );
+  }
 
   return (
     <>
       <PageHeader
         title="Products"
-        description="Everything here is admin-defined — delivery type, fulfillment type and inventory mode are per product, never hardcoded."
-        action={
-          <Button
-            onClick={() => {
-              setEditing({});
-              setForm(EMPTY);
-            }}
-          >
-            New product
-          </Button>
-        }
+        description="Catalog, prices, images and how each product is delivered."
+        action={can('products.write') && <Button onClick={() => setEditing({})}>New product</Button>}
       />
 
-      {editing && (
-        <Card className="mb-6">
-          <CardContent className="space-y-4 p-4">
-            <p className="text-sm font-medium">{editing.id ? 'Edit product' : 'New product'}</p>
-            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-              {field('name', 'Name')}
-              {field('slug', 'Slug')}
-              {field('price', 'Price')}
-              {field('currency', 'Currency')}
-              {field('stock', 'Stock (QUANTITY mode)', 'number')}
-              {select('inventoryMode', 'Inventory mode', INVENTORY_MODES)}
-              {select('deliveryType', 'Delivery type', DELIVERY_TYPES)}
-              {select('fulfillmentType', 'Fulfillment type', FULFILLMENT_TYPES)}
-              {select('status', 'Status', PRODUCT_STATUSES)}
-              {select('visibility', 'Visibility', PRODUCT_VISIBILITIES)}
-              {field('duration', 'Duration')}
-              {field('warranty', 'Warranty')}
-              <div className="space-y-1">
-                <Label htmlFor="categoryId">Category</Label>
-                <select
-                  id="categoryId"
-                  value={String(form.categoryId ?? '')}
-                  onChange={(e) => setForm({ ...form, categoryId: e.target.value })}
-                  className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
-                >
-                  <option value="">— none —</option>
-                  {categories?.map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            </div>
-            {field('shortDescription', 'Short description')}
-            {field('description', 'Full description')}
-            {field('images', 'Image URLs (comma-separated)')}
-            {field('compareAtPrice', 'Compare-at price (original before discount)')}
-            {field('tags', 'Tags (comma-separated)')}
-            <label className="flex items-center gap-2 text-sm">
-              <input
-                type="checkbox"
-                checked={Boolean(form.featured)}
-                onChange={(e) => setForm({ ...form, featured: e.target.checked })}
-              />
-              Featured product
-            </label>
-            {error && <p className="text-sm text-destructive">{error}</p>}
-            <div className="flex gap-2">
-              <Button size="sm" disabled={save.isPending} onClick={() => save.mutate()}>
-                Save
-              </Button>
-              <Button size="sm" variant="outline" onClick={close}>
-                Cancel
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
+      {flash && (
+        <p className="mb-4 rounded-md border border-success/40 bg-success/10 p-2 text-sm">{flash}</p>
       )}
+
+      <Card className="mb-4">
+        <CardContent className="grid gap-2 p-3 sm:grid-cols-3">
+          <Input placeholder="Search by name…" value={search} onChange={(e) => setSearch(e.target.value)} />
+          <Select
+            value={categoryId}
+            onChange={(e) => setCategoryId(e.target.value)}
+            placeholder="All categories"
+            options={(categories ?? []).map((c) => ({ value: c.id, label: c.name }))}
+          />
+          <Select
+            value={status}
+            onChange={(e) => setStatus(e.target.value)}
+            placeholder="Any status"
+            options={[
+              { value: 'ACTIVE', label: 'Active' },
+              { value: 'DRAFT', label: 'Draft' },
+              { value: 'ARCHIVED', label: 'Archived' },
+            ]}
+          />
+        </CardContent>
+      </Card>
 
       <DataTable<AdminProduct>
         rows={data?.items}
         isLoading={isLoading}
-        error={loadError}
-        empty="No products yet."
+        error={error}
+        empty="No products match."
+        onRowClick={can('products.write') ? (p) => setEditing(p) : undefined}
         columns={[
-          { header: 'Name', cell: (r) => r.name },
-          { header: 'Price', cell: (r) => `${r.price} ${r.currency}` },
           {
-            header: 'Stock',
-            cell: (r) => (
-              <span className={r.availableStock <= 3 ? 'text-warning' : undefined}>
-                {r.availableStock}
+            header: '',
+            className: 'w-14',
+            cell: (p) =>
+              p.images[0] ? (
+                // eslint-disable-next-line @next/next/no-img-element -- arbitrary storage hosts
+                <img src={p.images[0]} alt="" className="h-10 w-10 rounded object-cover" />
+              ) : (
+                <div className="h-10 w-10 rounded bg-muted" />
+              ),
+          },
+          {
+            header: 'Product',
+            cell: (p) => (
+              <div dir="auto">
+                <p className="font-medium">{p.name}</p>
+                <p className="text-xs text-muted-foreground">{p.category?.name ?? 'No category'}</p>
+              </div>
+            ),
+          },
+          {
+            header: 'Price',
+            cell: (p) => (
+              <span>
+                {p.price} {p.currency}
+                {p.compareAtPrice && (
+                  <span className="ml-1 text-xs text-muted-foreground line-through">{p.compareAtPrice}</span>
+                )}
               </span>
             ),
           },
-          { header: 'Inventory', cell: (r) => r.inventoryMode },
-          { header: 'Delivery', cell: (r) => r.deliveryType },
           {
-            header: 'State',
-            cell: (r) => (
-              <Badge variant={r.status === 'ACTIVE' ? 'success' : 'secondary'}>
-                {r.status}/{r.visibility}
+            header: 'Stock',
+            cell: (p) => (
+              <Badge variant={p.availableStock <= 0 ? 'destructive' : p.availableStock <= 3 ? 'warning' : 'secondary'}>
+                {p.availableStock} {p.inventoryMode === 'INDIVIDUAL' ? 'items' : ''}
               </Badge>
             ),
           },
           {
-            header: '',
-            cell: (r) => (
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={() => {
-                  setEditing(r);
-                  setForm({
-                    ...r,
-                    categoryId: r.categoryId ?? '',
-                    images: (r.images ?? []).join(', '),
-                    tags: (r.tags ?? []).join(', '),
-                    compareAtPrice: r.compareAtPrice ?? '',
-                    description: r.description ?? '',
-                    shortDescription: r.shortDescription ?? '',
-                    duration: r.duration ?? '',
-                    warranty: r.warranty ?? '',
-                  });
-                }}
-              >
-                Edit
-              </Button>
+            header: 'Delivery',
+            cell: (p) => (
+              <span className="text-xs text-muted-foreground">
+                {p.inventoryMode === 'INDIVIDUAL' && !['MANUAL', 'CUSTOM'].includes(p.deliveryType) ? 'Automatic' : 'Manual'}
+                {p.deliveryTemplate ? ` · ${p.deliveryTemplate.name}` : ''}
+              </span>
             ),
+          },
+          {
+            header: 'Status',
+            cell: (p) => (
+              <div className="flex flex-wrap gap-1">
+                <Badge variant={p.status === 'ACTIVE' ? 'success' : 'secondary'}>{p.status.toLowerCase()}</Badge>
+                {p.visibility === 'HIDDEN' && <Badge variant="outline">hidden</Badge>}
+                {p.featured && <Badge variant="warning">featured</Badge>}
+              </div>
+            ),
+          },
+          {
+            header: '',
+            cell: (p) =>
+              can('products.write') && (
+                <div className="flex justify-end gap-1" onClick={(e) => e.stopPropagation()}>
+                  <Button size="sm" variant="outline" onClick={() => setEditing(p)}>
+                    Edit
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={quickUpdate.isPending}
+                    onClick={() =>
+                      quickUpdate.mutate({
+                        id: p.id,
+                        body: { visibility: p.visibility === 'VISIBLE' ? 'HIDDEN' : 'VISIBLE' },
+                      })
+                    }
+                  >
+                    {p.visibility === 'VISIBLE' ? 'Hide' : 'Show'}
+                  </Button>
+                  {p.status !== 'ARCHIVED' && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => {
+                        if (window.confirm(`Archive "${p.name}"? It will be hidden from the store.`)) archive.mutate(p.id);
+                      }}
+                    >
+                      Archive
+                    </Button>
+                  )}
+                </div>
+              ),
           },
         ]}
       />
+      {data && data.total > data.items.length && (
+        <p className="mt-2 text-xs text-muted-foreground">
+          Showing {data.items.length} of {data.total} — refine the search to find others.
+        </p>
+      )}
     </>
   );
 }

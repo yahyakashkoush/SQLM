@@ -278,6 +278,8 @@ model Product {
   deliveryType           DeliveryType
   fulfillmentType        FulfillmentType
   activationInstructions String?
+  deliveryTemplateId     String?
+  deliveryTemplate       DeliveryTemplate? @relation(fields: [deliveryTemplateId], references: [id], onDelete: SetNull)
   status                 ProductStatus     @default(DRAFT)
   visibility             ProductVisibility @default(HIDDEN)
   featured               Boolean           @default(false)
@@ -292,6 +294,22 @@ model Product {
   @@index([status, visibility, categoryId])
   @@index([featured])
   @@map("products")
+}
+
+/// Reusable fulfillment layout. `content` pre-fills the staff member's
+/// delivery form (e.g. "Email:\nPassword:"); `message`, when set, replaces
+/// the store-wide customer delivery message for products using it.
+model DeliveryTemplate {
+  id        String   @id @default(uuid())
+  name      String
+  content   String
+  message   String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  products Product[]
+
+  @@map("delivery_templates")
 }
 
 // =============================================================================

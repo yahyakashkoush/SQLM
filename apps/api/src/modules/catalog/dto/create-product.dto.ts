@@ -27,12 +27,14 @@ import {
 } from '@sqlm/shared';
 
 export class CreateProductDto {
+  /** Generated from `name` when omitted. */
+  @IsOptional()
   @IsString()
   @MaxLength(160)
   @Matches(/^[a-z0-9]+(?:-[a-z0-9]+)*$/, {
-    message: 'slug must be lowercase, alphanumeric, hyphen-separated',
+    message: 'slug must be lowercase English letters, numbers and hyphens',
   })
-  slug!: string;
+  slug?: string;
 
   @IsString()
   @MaxLength(200)
@@ -121,4 +123,13 @@ export class CreateProductDto {
   @IsOptional()
   @IsObject()
   metadata?: Record<string, unknown>;
+
+  @IsOptional()
+  @IsUUID()
+  deliveryTemplateId?: string | null;
+
+  /** Not persisted: broadcast the product to all customers after saving. */
+  @IsOptional()
+  @IsBoolean()
+  notifyCustomers?: boolean;
 }

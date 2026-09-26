@@ -1,6 +1,8 @@
 import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { Prisma, type Order } from '@prisma/client';
-import type { OrderStatus, PaginatedResult } from '@sqlm/shared';
+import { ConfigService } from '@nestjs/config';
+import { ORDER_STATUS_LABELS_AR, renderTemplate, type OrderStatus, type PaginatedResult } from '@sqlm/shared';
+import { SettingsService } from '../settings/settings.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { NotificationDispatcher } from '../notifications/notification-dispatcher.service';
 import { InventoryService } from '../inventory/inventory.service';
@@ -30,6 +32,8 @@ export class OrdersService {
     private readonly prisma: PrismaService,
     private readonly inventory: InventoryService,
     private readonly notifications: NotificationDispatcher,
+    private readonly settings: SettingsService,
+    private readonly config: ConfigService,
   ) {}
 
   /**
@@ -209,13 +213,58 @@ export class OrdersService {
 
     // Best-effort: dispatcher swallows its own failures, so an unreachable
     // queue/stream can never roll back the transition itself.
+    const message = await this.customerStatusMessage(
+      order.status as OrderStatus,
+      toStatus,
+      updated.sequenceNumber,
+      note,
+    );
+    const miniAppUrl = (this.config.get<string>('MINIAPP_URL') || 'http://localhost:3200').replace(/\/$/, '');
     await this.notifications.notifyCustomer(order.customerId, {
       kind: 'order.status_changed',
       orderId,
-      summary: `Order #${updated.sequenceNumber} is now ${toStatus.replace(/_/g, ' ').toLowerCase()}`,
+      status: toStatus,
+      summary: message ?? `📦 طلب #${updated.sequenceNumber}: ${ORDER_STATUS_LABELS_AR[toStatus]}`,
+      silent: message === null,
+      button: { text: '📦 عرض الطلب', url: `${miniAppUrl}/orders/${orderId}` },
     });
 
     return updated;
+  }
+
+  /**
+   * The Telegram text for a status change, or null when the step is
+   * internal (payment review, processing) or covered by its own message
+   * (deliveries) — the customer gets one message per meaningful event, not
+   * a burst of five when an order is paid and auto-delivered.
+   */
+  private async customerStatusMessage(
+    from: OrderStatus,
+    to: OrderStatus,
+    orderNumber: number,
+    note?: string,
+  ): Promise<string | null> {
+    const values = { ...(await this.settings.storeValues()), order_number: orderNumber };
+    switch (to) {
+      case 'PAID':
+        return renderTemplate(await this.settings.getString('orders.paymentApprovedMessage'), values);
+      case 'PENDING_PAYMENT':
+        if (from !== 'PAYMENT_REVIEW' && from !== 'PAYMENT_SUBMITTED') return null;
+        return renderTemplate(await this.settings.getString('orders.paymentRejectedMessage'), {
+          ...values,
+          reason: note || '—',
+        });
+      case 'COMPLETED':
+        return `🎉 طلبك #${orderNumber} اكتمل. شكراً لتعاملك مع ${values.store_name}!`;
+      case 'CANCELLED':
+        return `❌ تم إلغاء طلبك #${orderNumber}.${note ? `\nالسبب: ${note}` : ''}`;
+      case 'REFUNDED':
+        return `💸 تم استرداد مبلغ طلبك #${orderNumber}.${note ? `\n${note}` : ''}`;
+      case 'DISPUTED':
+        return `⚠️ طلبك #${orderNumber} قيد المراجعة، وفريق الدعم هيتواصل معاك.`;
+      default:
+        return null;
+    }
   }
 
   /** Convenience wrapper for callers (e.g. the admin transition endpoint) that don't already have an open transaction. */
@@ -239,10 +288,19 @@ export class OrdersService {
     }
   }
 
-  async findByIdForCustomer(id: string, customerId: string): Promise<OrderWithItems> {
+  async findByIdForCustomer(id: string, customerId: string) {
     const order = await this.prisma.order.findFirst({
       where: { id, customerId },
-      include: { items: true },
+      include: {
+        items: { include: { product: { select: { slug: true, images: true } } } },
+        paymentMethod: {
+          select: { id: true, name: true, description: true, accountNumber: true, instructions: true, qrCodeUrl: true, currency: true },
+        },
+        paymentProofs: {
+          orderBy: { uploadedAt: 'desc' },
+          select: { id: true, status: true, rejectionReason: true, uploadedAt: true },
+        },
+      },
     });
     if (!order) throw new NotFoundException('Order not found');
     return order;
@@ -273,21 +331,50 @@ export class OrdersService {
     return { items, page, pageSize, total, totalPages: Math.max(1, Math.ceil(total / pageSize)) };
   }
 
-  async findByIdAdmin(id: string): Promise<OrderWithItems> {
-    const order = await this.prisma.order.findUnique({ where: { id }, include: { items: true } });
+  async findByIdAdmin(id: string) {
+    const order = await this.prisma.order.findUnique({
+      where: { id },
+      include: {
+        items: { include: { product: { select: { id: true, slug: true, images: true } } } },
+        customer: true,
+        paymentMethod: true,
+        paymentProofs: { orderBy: { uploadedAt: 'desc' }, include: { reviewedBy: { select: { name: true } } } },
+        events: {
+          orderBy: { createdAt: 'desc' },
+          include: { actorStaff: { select: { name: true } } },
+        },
+      },
+    });
     if (!order) throw new NotFoundException('Order not found');
-    return order;
+    return { ...order, customer: { ...order.customer, telegramId: order.customer.telegramId.toString() } };
   }
 
-  async listAdmin(query: OrderQueryDto): Promise<PaginatedResult<OrderWithItems>> {
+  async listAdmin(query: OrderQueryDto) {
     const page = query.page ?? 1;
     const pageSize = query.pageSize ?? 20;
-    const where: Prisma.OrderWhereInput = query.status ? { status: query.status } : {};
+    const search = query.search?.trim().replace(/^[#@]/, '');
+    const orderNumber = search && /^\d+$/.test(search) ? Number(search) : undefined;
+    const where: Prisma.OrderWhereInput = {
+      ...(query.status ? { status: query.status } : {}),
+      ...(search
+        ? {
+            OR: [
+              ...(orderNumber !== undefined && orderNumber < 2 ** 31 ? [{ sequenceNumber: orderNumber }] : []),
+              { customer: { telegramUsername: { contains: search, mode: 'insensitive' } } },
+              { customer: { firstName: { contains: search, mode: 'insensitive' } } },
+            ],
+          }
+        : {}),
+    };
 
     const [items, total] = await this.prisma.$transaction([
       this.prisma.order.findMany({
         where,
-        include: { items: true },
+        include: {
+          items: true,
+          customer: { select: { id: true, firstName: true, telegramUsername: true } },
+          paymentMethod: { select: { id: true, name: true } },
+        },
         orderBy: { createdAt: 'desc' },
         skip: (page - 1) * pageSize,
         take: pageSize,

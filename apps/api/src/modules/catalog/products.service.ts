@@ -2,6 +2,7 @@ import { ConflictException, Injectable, NotFoundException } from '@nestjs/common
 import type { Prisma, Product } from '@prisma/client';
 import type { PaginatedResult } from '@sqlm/shared';
 import { PrismaService } from '../prisma/prisma.service';
+import { slugify, uniqueSlug } from '../../common/utils/slug';
 import type { CreateProductDto } from './dto/create-product.dto';
 import type { UpdateProductDto } from './dto/update-product.dto';
 import type { AdminProductQueryDto, ProductQueryDto } from './dto/product-query.dto';
@@ -78,12 +79,23 @@ export class ProductsService {
     const where: Prisma.ProductWhereInput = {
       ...(query.status ? { status: query.status } : {}),
       ...(query.categoryId ? { categoryId: query.categoryId } : {}),
-      ...(query.search ? { name: { contains: query.search, mode: 'insensitive' } } : {}),
+      ...(query.search
+        ? {
+            OR: [
+              { name: { contains: query.search, mode: 'insensitive' } },
+              { slug: { contains: query.search, mode: 'insensitive' } },
+            ],
+          }
+        : {}),
     };
 
     const [items, total] = await this.prisma.$transaction([
       this.prisma.product.findMany({
         where,
+        include: {
+          category: { select: { id: true, name: true } },
+          deliveryTemplate: { select: { id: true, name: true } },
+        },
         orderBy: { createdAt: 'desc' },
         skip: (page - 1) * pageSize,
         take: pageSize,
@@ -109,25 +121,40 @@ export class ProductsService {
   }
 
   async create(dto: CreateProductDto): Promise<Product> {
-    await this.assertSlugAvailable(dto.slug);
-    if (dto.categoryId) {
-      const category = await this.prisma.category.findUnique({ where: { id: dto.categoryId } });
-      if (!category) throw new NotFoundException('Category not found');
-    }
-    return this.prisma.product.create({ data: dto as Prisma.ProductUncheckedCreateInput });
+    const { notifyCustomers: _notify, ...data } = dto;
+    if (data.slug) await this.assertSlugAvailable(data.slug);
+    else data.slug = await uniqueSlug(slugify(data.name), async (slug) =>
+      Boolean(await this.prisma.product.findUnique({ where: { slug } })),
+    );
+    await this.assertReferencesExist(data);
+    return this.prisma.product.create({ data: data as Prisma.ProductUncheckedCreateInput });
   }
 
   async update(id: string, dto: UpdateProductDto): Promise<Product> {
+    const { notifyCustomers: _notify, ...data } = dto;
     await this.findByIdAdmin(id);
-    if (dto.slug) await this.assertSlugAvailable(dto.slug, id);
+    if (data.slug) await this.assertSlugAvailable(data.slug, id);
+    await this.assertReferencesExist(data);
+    return this.prisma.product.update({
+      where: { id },
+      data: data as Prisma.ProductUncheckedUpdateInput,
+    });
+  }
+
+  private async assertReferencesExist(dto: {
+    categoryId?: string | null;
+    deliveryTemplateId?: string | null;
+  }): Promise<void> {
     if (dto.categoryId) {
       const category = await this.prisma.category.findUnique({ where: { id: dto.categoryId } });
       if (!category) throw new NotFoundException('Category not found');
     }
-    return this.prisma.product.update({
-      where: { id },
-      data: dto as Prisma.ProductUncheckedUpdateInput,
-    });
+    if (dto.deliveryTemplateId) {
+      const template = await this.prisma.deliveryTemplate.findUnique({
+        where: { id: dto.deliveryTemplateId },
+      });
+      if (!template) throw new NotFoundException('Delivery template not found');
+    }
   }
 
   /** Products are never hard-deleted once they can be referenced by orders/inventory — archive instead. */

@@ -1,61 +1,27 @@
 'use client';
 
 import { useState } from 'react';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Badge, Button, Card, CardContent, Input } from '@sqlm/ui';
-import { api, ApiError, type PaymentProof } from '@/lib/api';
+import Link from 'next/link';
+import { useQuery } from '@tanstack/react-query';
+import { Badge, Card, CardContent } from '@sqlm/ui';
+import { api, type PaymentProof } from '@/lib/api';
 import { PageHeader } from '@/components/layout/page-header';
+import { ProofReview } from '@/components/proof-review';
 
 export default function PaymentProofsPage() {
-  const queryClient = useQueryClient();
-  const [selected, setSelected] = useState<PaymentProof | null>(null);
-  const [proofUrl, setProofUrl] = useState<string | null>(null);
-  const [reason, setReason] = useState('');
-  const [error, setError] = useState<string | null>(null);
-
+  const [selectedId, setSelectedId] = useState<string | null>(null);
   const { data, isLoading } = useQuery({
     queryKey: ['payment-proofs'],
     queryFn: () => api.paymentProofs(),
-    refetchInterval: 30_000,
+    refetchInterval: 20_000,
   });
-
-  const refresh = () => {
-    void queryClient.invalidateQueries({ queryKey: ['payment-proofs'] });
-    void queryClient.invalidateQueries({ queryKey: ['stats'] });
-    setSelected(null);
-    setProofUrl(null);
-    setReason('');
-  };
-
-  const approve = useMutation({
-    mutationFn: (id: string) => api.approveProof(id),
-    onSuccess: refresh,
-    onError: (err) => setError(err instanceof ApiError ? err.message : 'Approval failed'),
-  });
-
-  const reject = useMutation({
-    mutationFn: ({ id, cancelOrder }: { id: string; cancelOrder: boolean }) =>
-      api.rejectProof(id, reason, cancelOrder),
-    onSuccess: refresh,
-    onError: (err) => setError(err instanceof ApiError ? err.message : 'Rejection failed'),
-  });
-
-  const openProof = async (proof: PaymentProof) => {
-    setSelected(proof);
-    setError(null);
-    try {
-      const { url } = await api.proofViewUrl(proof.id);
-      setProofUrl(url);
-    } catch {
-      setProofUrl(null);
-    }
-  };
+  const selected = data?.find((p) => p.id === selectedId) ?? data?.[0] ?? null;
 
   return (
     <>
       <PageHeader
         title="Payment Review"
-        description="Proofs are never auto-approved — each one is reviewed here."
+        description="Approve to start delivery; reject with a reason and the customer is told on Telegram."
       />
 
       {isLoading ? (
@@ -65,26 +31,27 @@ export default function PaymentProofsPage() {
           No payment proofs waiting for review.
         </p>
       ) : (
-        <div className="grid gap-4 lg:grid-cols-2">
+        <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.3fr)]">
           <div className="space-y-2">
-            {data.map((proof) => (
+            {data.map((proof: PaymentProof & { order?: { paymentMethod?: { name: string } | null } }) => (
               <Card
                 key={proof.id}
-                className={selected?.id === proof.id ? 'border-primary' : undefined}
+                onClick={() => setSelectedId(proof.id)}
+                className={`cursor-pointer ${selected?.id === proof.id ? 'border-primary' : 'hover:border-primary/40'}`}
               >
-                <CardContent className="flex items-center justify-between p-3">
-                  <div className="text-sm">
+                <CardContent className="flex items-center justify-between p-3 text-sm">
+                  <div>
                     <p className="font-medium">
-                      Order #{proof.order?.sequenceNumber ?? proof.orderId.slice(0, 8)}
+                      Order #{proof.order?.sequenceNumber} · {proof.order?.total} {proof.order?.currency}
                     </p>
                     <p className="text-xs text-muted-foreground">
-                      {proof.order?.total} {proof.order?.currency} ·{' '}
-                      {new Date(proof.uploadedAt).toLocaleString()}
+                      {proof.customer?.firstName ?? 'Customer'}
+                      {proof.customer?.telegramUsername && ` (@${proof.customer.telegramUsername})`}
+                      {proof.order?.paymentMethod && ` · ${proof.order.paymentMethod.name}`}
                     </p>
+                    <p className="text-xs text-muted-foreground">{new Date(proof.uploadedAt).toLocaleString()}</p>
                   </div>
-                  <Button size="sm" variant="outline" onClick={() => void openProof(proof)}>
-                    Review
-                  </Button>
+                  <Badge variant="warning">pending</Badge>
                 </CardContent>
               </Card>
             ))}
@@ -95,62 +62,19 @@ export default function PaymentProofsPage() {
               <CardContent className="space-y-3 p-4">
                 <div className="flex items-center justify-between">
                   <p className="text-sm font-medium">
-                    Order #{selected.order?.sequenceNumber ?? selected.orderId.slice(0, 8)}
+                    Order #{selected.order?.sequenceNumber} — {selected.order?.total} {selected.order?.currency}
                   </p>
-                  <Badge variant="warning">{selected.status}</Badge>
+                  <Link href={`/orders/${selected.orderId}`} className="text-xs text-primary underline">
+                    Open order
+                  </Link>
                 </div>
-
-                {proofUrl ? (
-                  selected.mimeType === 'application/pdf' ? (
-                    <a
-                      href={proofUrl}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="text-sm text-primary underline"
-                    >
-                      Open PDF proof
-                    </a>
-                  ) : (
-                    // eslint-disable-next-line @next/next/no-img-element -- presigned, time-limited storage URL
-                    <img src={proofUrl} alt="Payment proof" className="max-h-80 rounded border" />
-                  )
-                ) : (
-                  <p className="text-xs text-muted-foreground">Generating secure view link…</p>
-                )}
-
-                <Input
-                  placeholder="Rejection reason (required to reject)"
-                  value={reason}
-                  onChange={(e) => setReason(e.target.value)}
+                <ProofReview
+                  key={selected.id}
+                  proofId={selected.id}
+                  mimeType={selected.mimeType}
+                  pending
+                  onDone={() => setSelectedId(null)}
                 />
-
-                <div className="flex flex-wrap gap-2">
-                  <Button
-                    size="sm"
-                    disabled={approve.isPending}
-                    onClick={() => approve.mutate(selected.id)}
-                  >
-                    Approve &amp; fulfill
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    disabled={!reason || reject.isPending}
-                    onClick={() => reject.mutate({ id: selected.id, cancelOrder: false })}
-                  >
-                    Reject — let them retry
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="destructive"
-                    disabled={!reason || reject.isPending}
-                    onClick={() => reject.mutate({ id: selected.id, cancelOrder: true })}
-                  >
-                    Reject &amp; cancel order
-                  </Button>
-                </div>
-
-                {error && <p className="text-sm text-destructive">{error}</p>}
               </CardContent>
             </Card>
           )}
