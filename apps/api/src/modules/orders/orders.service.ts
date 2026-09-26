@@ -214,6 +214,7 @@ export class OrdersService {
     // Best-effort: dispatcher swallows its own failures, so an unreachable
     // queue/stream can never roll back the transition itself.
     const message = await this.customerStatusMessage(
+      tx,
       order.status as OrderStatus,
       toStatus,
       updated.sequenceNumber,
@@ -239,18 +240,23 @@ export class OrdersService {
    * a burst of five when an order is paid and auto-delivered.
    */
   private async customerStatusMessage(
+    tx: PrismaTx,
     from: OrderStatus,
     to: OrderStatus,
     orderNumber: number,
     note?: string,
   ): Promise<string | null> {
-    const values = { ...(await this.settings.storeValues()), order_number: orderNumber };
+    const silent =
+      !['PAID', 'PENDING_PAYMENT', 'COMPLETED', 'CANCELLED', 'REFUNDED', 'DISPUTED'].includes(to) ||
+      (to === 'PENDING_PAYMENT' && from !== 'PAYMENT_REVIEW' && from !== 'PAYMENT_SUBMITTED');
+    if (silent) return null;
+
+    const values = { ...(await this.settings.storeValues(tx)), order_number: orderNumber };
     switch (to) {
       case 'PAID':
-        return renderTemplate(await this.settings.getString('orders.paymentApprovedMessage'), values);
+        return renderTemplate(await this.settings.getString('orders.paymentApprovedMessage', tx), values);
       case 'PENDING_PAYMENT':
-        if (from !== 'PAYMENT_REVIEW' && from !== 'PAYMENT_SUBMITTED') return null;
-        return renderTemplate(await this.settings.getString('orders.paymentRejectedMessage'), {
+        return renderTemplate(await this.settings.getString('orders.paymentRejectedMessage', tx), {
           ...values,
           reason: note || '—',
         });

@@ -1,6 +1,15 @@
 import { Injectable } from '@nestjs/common';
+import type { Prisma } from '@prisma/client';
 import { SETTING_DEFAULTS, SETTING_DEFINITIONS } from '@sqlm/shared';
 import { PrismaService } from '../prisma/prisma.service';
+
+/**
+ * Callers inside an interactive transaction must pass their `tx`: a query
+ * on the root client there needs a second pool connection while the
+ * transaction holds the first, and a burst of concurrent transactions
+ * then starves the pool until every one of them times out.
+ */
+type Db = Pick<Prisma.TransactionClient, 'platformSetting'>;
 
 const CACHE_TTL_MS = 10_000;
 
@@ -15,17 +24,17 @@ export class SettingsService {
 
   constructor(private readonly prisma: PrismaService) {}
 
-  async all(): Promise<Record<string, unknown>> {
+  async all(db: Db = this.prisma): Promise<Record<string, unknown>> {
     if (this.cache && Date.now() - this.cache.loadedAt < CACHE_TTL_MS) return this.cache.values;
-    const rows = await this.prisma.platformSetting.findMany();
+    const rows = await db.platformSetting.findMany();
     const values: Record<string, unknown> = { ...SETTING_DEFAULTS };
     for (const row of rows) values[row.key] = row.value;
     this.cache = { values, loadedAt: Date.now() };
     return values;
   }
 
-  async getString(key: string): Promise<string> {
-    const value = (await this.all())[key];
+  async getString(key: string, db?: Db): Promise<string> {
+    const value = (await this.all(db))[key];
     if (typeof value === 'string') return value;
     return value === undefined || value === null ? String(SETTING_DEFAULTS[key] ?? '') : String(value);
   }
@@ -39,10 +48,10 @@ export class SettingsService {
   }
 
   /** Values commonly substituted into customer-facing templates. */
-  async storeValues(): Promise<{ store_name: string; support_contact: string }> {
+  async storeValues(db?: Db): Promise<{ store_name: string; support_contact: string }> {
     return {
-      store_name: await this.getString('store.name'),
-      support_contact: await this.getString('store.supportContact'),
+      store_name: await this.getString('store.name', db),
+      support_contact: await this.getString('store.supportContact', db),
     };
   }
 
