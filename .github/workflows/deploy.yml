@@ -1,0 +1,60 @@
+name: Deploy
+
+# Every push to the production branch rebuilds and restarts the stack on the
+# EC2 host. Needs three repository secrets (Settings → Secrets and variables
+# → Actions): EC2_HOST, EC2_USER and EC2_SSH_KEY (the private key contents).
+# Without them the job is skipped, not failed.
+on:
+  push:
+    branches: [claude/gifted-pasteur-kpxp3n, main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      EC2_HOST: ${{ secrets.EC2_HOST }}
+      EC2_USER: ${{ secrets.EC2_USER }}
+      EC2_SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
+      BRANCH: ${{ github.ref_name }}
+    steps:
+      - name: Skip when deploy secrets are not configured
+        if: env.EC2_HOST == '' || env.EC2_SSH_KEY == ''
+        run: echo "::notice::EC2_HOST / EC2_SSH_KEY secrets not set — skipping deploy."
+
+      - name: Deploy over SSH
+        if: env.EC2_HOST != '' && env.EC2_SSH_KEY != ''
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "$EC2_SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H "$EC2_HOST" >> ~/.ssh/known_hosts 2>/dev/null
+          ssh -i ~/.ssh/deploy_key -o ServerAliveInterval=30 "${EC2_USER:-ubuntu}@$EC2_HOST" \
+            "BRANCH='$BRANCH' bash -s" <<'REMOTE'
+          set -euo pipefail
+          cd /opt/sqlm
+          sudo git config --global --add safe.directory /opt/sqlm
+          sudo git fetch --quiet origin "$BRANCH"
+          sudo git checkout --quiet -f -B "$BRANCH" "origin/$BRANCH"
+          echo "Deploying $(sudo git log -1 --format='%h %s')"
+          # `migrate` runs first; app containers only start once it succeeds.
+          sudo docker compose -f docker-compose.prod.yml up -d --build --remove-orphans
+          sudo docker image prune -f >/dev/null
+          for i in $(seq 1 30); do
+            if curl -fsS http://localhost:4000/api/health/ready >/dev/null 2>&1 \
+              || sudo docker compose -f docker-compose.prod.yml exec -T api node -e "fetch('http://127.0.0.1:4000/api/health/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"; then
+              echo "API is ready"
+              sudo docker compose -f docker-compose.prod.yml ps
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "API did not become ready"
+          sudo docker compose -f docker-compose.prod.yml logs --tail=80 api migrate
+          exit 1
+          REMOTE

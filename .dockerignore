@@ -1,0 +1,29 @@
+# Without this, `COPY . .` drops the host's node_modules over the one the
+# deps stage installed. pnpm's node_modules is a farm of symlinks into
+# .pnpm, and Docker does not reproduce it faithfully — the result builds
+# but fails at runtime with "Cannot find module 'express'".
+node_modules
+**/node_modules
+
+# Build output — regenerated inside the image.
+dist
+.next
+**/dist
+**/.next
+# A stale tsbuildinfo from the host convinces tsc everything is already
+# built, so it emits nothing and dist never appears inside the image.
+**/*.tsbuildinfo
+
+# Never ship secrets or local state into a layer.
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+.git
+.github
+.turbo
+coverage
+*.log
+.DS_Store
