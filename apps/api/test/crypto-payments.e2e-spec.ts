@@ -8,6 +8,16 @@ import { AppModule } from '../src/app.module';
 import { configureApp } from '../src/bootstrap';
 import { PrismaService } from '../src/modules/prisma/prisma.service';
 import { PaymentMethodsService } from '../src/modules/payments/payment-methods.service';
+
+/**
+ * Approving a payment dispatches fulfillment after the transaction commits,
+ * and a worker in this same process then moves the order PAID -> PROCESSING.
+ * Whether a read lands before or after that worker is a race, so asserting
+ * the exact string `PAID` makes the test a coin flip. What actually matters
+ * is that the payment was accepted and the order moved past review; `paidAt`
+ * is set once and never cleared, so it is the durable half of that check.
+ */
+const PAID_OR_LATER = ['PAID', 'PROCESSING', 'READY_FOR_DELIVERY', 'DELIVERED', 'COMPLETED'];
 import { DepositPollerService } from '../src/modules/crypto-payments/deposit-poller.service';
 import { CryptoWatchService } from '../src/modules/crypto-payments/crypto-watch.service';
 import { ExchangeRegistry } from '../src/modules/crypto-payments/exchange/exchange-registry.service';
@@ -290,7 +300,7 @@ describe('Crypto auto-payments (e2e)', () => {
       expect(summary.settled).toBe(1);
 
       const order = await prisma.order.findUniqueOrThrow({ where: { id: orderId } });
-      expect(order.status).toBe('PAID');
+      expect(PAID_OR_LATER).toContain(order.status);
       expect(order.paidAt).not.toBeNull();
       expect((await watchFor(orderId)).status).toBe('MATCHED');
     });
@@ -348,7 +358,9 @@ describe('Crypto auto-payments (e2e)', () => {
         where: { orderId, type: 'STATUS_CHANGED', note: { contains: 'PAID' } },
       });
       expect(events.length).toBeLessThanOrEqual(1);
-      expect((await prisma.order.findUniqueOrThrow({ where: { id: orderId } })).status).toBe('PAID');
+      expect(PAID_OR_LATER).toContain(
+        (await prisma.order.findUniqueOrThrow({ where: { id: orderId } })).status,
+      );
     });
 
     it('leaves the order alone when the amount is off by one unit', async () => {
@@ -446,7 +458,9 @@ describe('Crypto auto-payments (e2e)', () => {
       // picked up now rather than being lost with the API response.
       const second = await poller.pollOnce();
       expect(second.settled).toBe(1);
-      expect((await prisma.order.findUniqueOrThrow({ where: { id: orderId } })).status).toBe('PAID');
+      expect(PAID_OR_LATER).toContain(
+        (await prisma.order.findUniqueOrThrow({ where: { id: orderId } })).status,
+      );
     });
 
     it('keeps sweeping after an exchange error', async () => {

@@ -8,6 +8,16 @@ import { AppModule } from '../src/app.module';
 import { configureApp } from '../src/bootstrap';
 import { PrismaService } from '../src/modules/prisma/prisma.service';
 
+/**
+ * Approving a payment dispatches fulfillment after the transaction commits,
+ * and a worker in this same process then moves the order PAID -> PROCESSING.
+ * Whether a read lands before or after that worker is a race, so asserting
+ * the exact string `PAID` makes the test a coin flip. What actually matters
+ * is that the payment was accepted and the order moved past review; `paidAt`
+ * is set once and never cleared, so it is the durable half of that check.
+ */
+const PAID_OR_LATER = ['PAID', 'PROCESSING', 'READY_FOR_DELIVERY', 'DELIVERED', 'COMPLETED'];
+
 
 /** A minimal but genuinely valid PNG — the upload path verifies magic bytes, not just the declared type. */
 function pngBytes(): Buffer {
@@ -210,7 +220,7 @@ describe('Payments + Payment Proofs (e2e)', () => {
         .expect(201);
 
       const order = await prisma.order.findUniqueOrThrow({ where: { id: orderId } });
-      expect(order.status).toBe('PAID');
+      expect(PAID_OR_LATER).toContain(order.status);
       expect(order.paidAt).not.toBeNull();
     });
 
@@ -234,7 +244,7 @@ describe('Payments + Payment Proofs (e2e)', () => {
       expect(statuses).toEqual([201, 409]);
 
       const order = await prisma.order.findUniqueOrThrow({ where: { id: orderId } });
-      expect(order.status).toBe('PAID');
+      expect(PAID_OR_LATER).toContain(order.status);
       const events = await prisma.orderEvent.count({
         where: { orderId, type: 'PAYMENT_APPROVED' },
       });
