@@ -2,6 +2,7 @@ import { useAuthStore } from '@/store/auth-store';
 import type {
   Category,
   CustomerDelivery,
+  CryptoPayment,
   CustomerProfile,
   Order,
   PaginatedResult,
@@ -77,6 +78,9 @@ export const api = {
   getOrder: (id: string) => request<Order>(`/orders/${id}`, {}, true),
 
   getDeliveries: (orderId: string) => request<CustomerDelivery[]>(`/orders/${orderId}/deliveries`, {}, true),
+
+  getCryptoPayment: (orderId: string) =>
+    request<CryptoPayment>(`/orders/${orderId}/crypto-payment`, {}, true),
 
   storeInfo: () => request<StoreInfo>('/store'),
 

@@ -12,6 +12,15 @@ import { useAuthStore } from '@/store/auth-store';
 
 const CURRENCIES = ['EGP', 'USD', 'SAR', 'AED', 'KWD', 'EUR'];
 
+const PROVIDERS = [
+  { value: 'MANUAL', label: 'Manual — you review a receipt' },
+  { value: 'BINANCE', label: 'Binance — settles automatically' },
+  { value: 'BYBIT', label: 'Bybit — settles automatically' },
+];
+
+/** Network codes as the exchanges report them on a deposit record. */
+const NETWORKS = ['TRX', 'BSC', 'ETH', 'SOL', 'MATIC', 'ARBITRUM', 'TON'];
+
 interface FormState {
   name: string;
   description: string;
@@ -21,6 +30,11 @@ interface FormState {
   currency: string;
   displayOrder: string;
   enabled: boolean;
+  provider: string;
+  cryptoAsset: string;
+  cryptoNetwork: string;
+  depositAddress: string;
+  watchTtlMinutes: string;
 }
 
 const EMPTY: FormState = {
@@ -32,6 +46,11 @@ const EMPTY: FormState = {
   currency: 'EGP',
   displayOrder: '0',
   enabled: true,
+  provider: 'MANUAL',
+  cryptoAsset: 'USDT',
+  cryptoNetwork: 'TRX',
+  depositAddress: '',
+  watchTtlMinutes: '60',
 };
 
 const toForm = (m: PaymentMethod): FormState => ({
@@ -43,6 +62,11 @@ const toForm = (m: PaymentMethod): FormState => ({
   currency: m.currency,
   displayOrder: String(m.displayOrder),
   enabled: m.enabled,
+  provider: m.provider ?? 'MANUAL',
+  cryptoAsset: m.cryptoAsset ?? 'USDT',
+  cryptoNetwork: m.cryptoNetwork ?? 'TRX',
+  depositAddress: m.depositAddress ?? '',
+  watchTtlMinutes: String(m.watchTtlMinutes ?? 60),
 });
 
 export default function PaymentMethodsPage() {
@@ -52,6 +76,7 @@ export default function PaymentMethodsPage() {
   const [form, setForm] = useState<FormState>(EMPTY);
   const [error, setError] = useState<string | null>(null);
   const set = <K extends keyof FormState>(k: K, v: FormState[K]) => setForm((f) => ({ ...f, [k]: v }));
+  const isCryptoForm = form.provider !== 'MANUAL';
 
   const { data, isLoading, error: loadError } = useQuery({
     queryKey: ['payment-methods'],
@@ -78,6 +103,13 @@ export default function PaymentMethodsPage() {
         currency: form.currency.trim().toUpperCase(),
         displayOrder: Number(form.displayOrder || 0),
         enabled: form.enabled,
+        provider: form.provider,
+        // Only meaningful for an exchange provider; sent as null on a
+        // manual method so switching back actually clears them.
+        cryptoAsset: isCryptoForm ? form.cryptoAsset.trim().toUpperCase() : null,
+        cryptoNetwork: isCryptoForm ? form.cryptoNetwork.trim().toUpperCase() : null,
+        depositAddress: isCryptoForm ? form.depositAddress.trim() : null,
+        watchTtlMinutes: Number(form.watchTtlMinutes || 60),
       };
       return editing && editing !== 'new' ? api.updatePaymentMethod(editing.id, body) : api.createPaymentMethod(body);
     },
@@ -145,10 +177,76 @@ export default function PaymentMethodsPage() {
                 )}
               </Field>
             </div>
+            <div className="space-y-3 rounded-lg border p-3">
+              <Field
+                label="Settlement"
+                htmlFor="pm-provider"
+                hint="An exchange provider confirms the order itself once the deposit lands — no receipt to review."
+              >
+                <Select
+                  id="pm-provider"
+                  value={form.provider}
+                  onChange={(e) => set('provider', e.target.value)}
+                  options={PROVIDERS}
+                />
+              </Field>
+
+              {isCryptoForm && (
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <Field label="Asset *" htmlFor="pm-asset" hint="Ticker as the exchange reports it, e.g. USDT.">
+                    <Input
+                      id="pm-asset"
+                      dir="ltr"
+                      value={form.cryptoAsset}
+                      onChange={(e) => set('cryptoAsset', e.target.value)}
+                      placeholder="USDT"
+                    />
+                  </Field>
+                  <Field label="Network *" htmlFor="pm-network" hint="A deposit on another chain will not settle the order.">
+                    <Select
+                      id="pm-network"
+                      value={form.cryptoNetwork}
+                      onChange={(e) => set('cryptoNetwork', e.target.value)}
+                      options={[...new Set([form.cryptoNetwork, ...NETWORKS])].map((n) => ({ value: n, label: n }))}
+                    />
+                  </Field>
+                  <Field
+                    label="Deposit address *"
+                    htmlFor="pm-address"
+                    className="sm:col-span-2"
+                    hint="Your address on that exchange, for this asset and network."
+                  >
+                    <Input
+                      id="pm-address"
+                      dir="ltr"
+                      value={form.depositAddress}
+                      onChange={(e) => set('depositAddress', e.target.value)}
+                    />
+                  </Field>
+                  <Field
+                    label="Payment window (minutes)"
+                    htmlFor="pm-ttl"
+                    hint="After this the order stops waiting and its amount is reused."
+                  >
+                    <Input
+                      id="pm-ttl"
+                      type="number"
+                      min="5"
+                      value={form.watchTtlMinutes}
+                      onChange={(e) => set('watchTtlMinutes', e.target.value)}
+                    />
+                  </Field>
+                  <p className="self-end text-xs text-muted-foreground sm:col-span-1">
+                    Each order is given a slightly different amount — that is how a deposit is matched to it.
+                  </p>
+                </div>
+              )}
+            </div>
+
             <Checkbox label="Enabled (offered at checkout)" checked={form.enabled} onChange={(v) => set('enabled', v)} />
             {error && <p className="text-sm text-destructive">{error}</p>}
             <div className="flex gap-2">
-              <Button size="sm" disabled={!form.name.trim() || save.isPending} onClick={() => save.mutate()}>
+              <Button size="sm" disabled={!form.name.trim() || save.isPending || (isCryptoForm && (!form.cryptoAsset.trim() || !form.depositAddress.trim()))} onClick={() => save.mutate()}>
                 {save.isPending ? 'Saving…' : 'Save'}
               </Button>
               <Button size="sm" variant="outline" onClick={close}>
@@ -168,6 +266,17 @@ export default function PaymentMethodsPage() {
           { header: 'Name', cell: (r) => <span dir="auto" className="font-medium">{r.name}</span> },
           { header: 'Account', cell: (r) => <span dir="auto">{r.accountNumber ?? '—'}</span> },
           { header: 'Currency', cell: (r) => r.currency },
+          {
+            header: 'Settlement',
+            cell: (r) =>
+              r.provider && r.provider !== 'MANUAL' ? (
+                <Badge variant="success">
+                  {r.provider} · {r.cryptoAsset}/{r.cryptoNetwork}
+                </Badge>
+              ) : (
+                <Badge variant="secondary">manual</Badge>
+              ),
+          },
           {
             header: 'Instructions',
             cell: (r) => (

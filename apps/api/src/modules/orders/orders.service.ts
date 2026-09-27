@@ -9,6 +9,7 @@ import { InventoryService } from '../inventory/inventory.service';
 import { InsufficientInventoryError } from '../inventory/errors/insufficient-inventory.error';
 import { assertTransitionAllowed, InvalidOrderTransitionError } from './order-state-machine';
 import { ProductNotPurchasableError, PaymentMethodUnavailableError } from './errors/order.errors';
+import { CryptoWatchService } from '../crypto-payments/crypto-watch.service';
 import type { CheckoutDto } from './dto/checkout.dto';
 import type { OrderQueryDto } from './dto/order-query.dto';
 
@@ -34,6 +35,7 @@ export class OrdersService {
     private readonly notifications: NotificationDispatcher,
     private readonly settings: SettingsService,
     private readonly config: ConfigService,
+    private readonly cryptoWatch: CryptoWatchService,
   ) {}
 
   /**
@@ -128,6 +130,20 @@ export class OrdersService {
       });
 
       this.logger.log(`Checkout created order ${order.id} for customer ${customerId}`);
+
+      if (paymentMethod.provider !== 'MANUAL') {
+        // Best-effort: the order is already committed, so a hiccup here
+        // must not fail the checkout the customer just completed. The
+        // payment page opens the watch on demand if this didn't.
+        try {
+          await this.cryptoWatch.openWatch(order.id, paymentMethod);
+        } catch (err) {
+          this.logger.error(
+            `Could not open crypto watch for order ${order.id}: ${err instanceof Error ? err.message : err}`,
+          );
+        }
+      }
+
       await this.notifications.notifyStaff({
         kind: 'order.created',
         orderId: order.id,
@@ -300,7 +316,7 @@ export class OrdersService {
       include: {
         items: { include: { product: { select: { slug: true, images: true } } } },
         paymentMethod: {
-          select: { id: true, name: true, description: true, accountNumber: true, instructions: true, qrCodeUrl: true, currency: true },
+          select: { id: true, name: true, description: true, accountNumber: true, instructions: true, qrCodeUrl: true, currency: true, provider: true },
         },
         paymentProofs: {
           orderBy: { uploadedAt: 'desc' },

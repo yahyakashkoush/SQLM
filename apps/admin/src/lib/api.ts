@@ -129,6 +129,13 @@ export const api = {
   paymentMethods: () => get<PaymentMethod[]>('/admin/payment-methods'),
   createPaymentMethod: (body: unknown) => post<PaymentMethod>('/admin/payment-methods', body),
   updatePaymentMethod: (id: string, body: unknown) => patch(`/admin/payment-methods/${id}`, body),
+
+  cryptoProviders: () => get<CryptoProviderStatus[]>('/admin/crypto-payments/providers'),
+  cryptoWatches: (status?: string) =>
+    get<CryptoWatch[]>(`/admin/crypto-payments/watches${status ? `?status=${status}` : ''}`),
+  cryptoDeposits: (unmatched?: boolean) =>
+    get<CryptoDeposit[]>(`/admin/crypto-payments/deposits${unmatched ? '?unmatched=true' : ''}`),
+  cryptoPollNow: () => post<CryptoPollSummary>('/admin/crypto-payments/poll', {}),
   deletePaymentMethod: (id: string) => del(`/admin/payment-methods/${id}`),
 
   paymentProofs: () => get<PaymentProof[]>('/admin/payment-proofs'),
@@ -321,6 +328,8 @@ export interface AdminOrderDetail extends Omit<AdminOrder, 'customer' | 'payment
   }>;
 }
 
+export type PaymentProvider = 'MANUAL' | 'BINANCE' | 'BYBIT';
+
 export interface PaymentMethod {
   id: string;
   name: string;
@@ -331,6 +340,55 @@ export interface PaymentMethod {
   currency: string;
   enabled: boolean;
   displayOrder: number;
+  provider?: PaymentProvider;
+  cryptoAsset?: string | null;
+  cryptoNetwork?: string | null;
+  depositAddress?: string | null;
+  watchTtlMinutes?: number;
+}
+
+export interface CryptoProviderStatus {
+  provider: PaymentProvider;
+  /** False when the server has no API key for it — nothing is polled. */
+  configured: boolean;
+}
+
+export interface CryptoWatch {
+  id: string;
+  orderId: string;
+  orderNumber: number;
+  orderStatus: string;
+  provider: PaymentProvider;
+  asset: string;
+  network: string;
+  address: string;
+  expectedAmount: string;
+  orderTotal: string;
+  status: 'WAITING' | 'MATCHED' | 'EXPIRED' | 'CANCELLED';
+  expiresAt: string;
+  matchedAt: string | null;
+  createdAt: string;
+}
+
+export interface CryptoDeposit {
+  id: string;
+  provider: PaymentProvider;
+  txId: string;
+  asset: string;
+  network: string;
+  amount: string;
+  address: string | null;
+  seenAt: string;
+  creditedAt: string | null;
+  orderId: string | null;
+  orderNumber: number | null;
+}
+
+export interface CryptoPollSummary {
+  ingested: number;
+  settled: number;
+  expired: number;
+  errors: string[];
 }
 
 export interface PaymentProof {

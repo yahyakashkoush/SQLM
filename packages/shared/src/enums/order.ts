@@ -53,6 +53,9 @@ export const ORDER_EVENT_TYPES = [
   'DELIVERY_STARTED',
   'DELIVERY_COMPLETED',
   'DELIVERY_FAILED',
+  'CRYPTO_WATCH_OPENED',
+  'CRYPTO_PAYMENT_DETECTED',
+  'CRYPTO_WATCH_EXPIRED',
 ] as const;
 
 export type OrderEventType = (typeof ORDER_EVENT_TYPES)[number];

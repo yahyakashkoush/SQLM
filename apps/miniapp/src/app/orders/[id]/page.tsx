@@ -9,6 +9,7 @@ import type { OrderStatus } from '@sqlm/shared';
 import { useDeliveries, useOrder } from '@/lib/queries';
 import { OrderStatusBadge } from '@/components/orders/order-status-badge';
 import { CopyButton } from '@/components/copy-button';
+import { CryptoPaymentCard } from '@/components/orders/crypto-payment-card';
 import { api, ApiError } from '@/lib/api';
 import { formatDate, formatMoney } from '@/lib/format';
 
@@ -52,6 +53,7 @@ export default function OrderDetailPage({ params }: { params: Promise<{ id: stri
   }
 
   const method = order.paymentMethod;
+  const isCrypto = Boolean(method?.provider && method.provider !== 'MANUAL');
   const lastProof = order.paymentProofs?.[0];
   const rejected = order.status === 'PENDING_PAYMENT' && lastProof?.status === 'REJECTED' ? lastProof : null;
   const stepIndex = STEPS.findIndex((s) => s.statuses.includes(order.status));
@@ -93,7 +95,11 @@ export default function OrderDetailPage({ params }: { params: Promise<{ id: stri
         </div>
       )}
 
-      <p className="rounded-lg bg-muted p-3 text-sm">{STATUS_HELP[order.status]}</p>
+      <p className="rounded-lg bg-muted p-3 text-sm">
+        {order.status === 'PENDING_PAYMENT' && isCrypto
+          ? 'ابعت المبلغ الظاهر تحت بالظبط على العنوان ده، والطلب هيتأكد لوحده.'
+          : STATUS_HELP[order.status]}
+      </p>
 
       {rejected && (
         <div className="flex gap-2 rounded-lg border border-destructive/40 bg-destructive/10 p-3 text-sm">
@@ -165,7 +171,9 @@ export default function OrderDetailPage({ params }: { params: Promise<{ id: stri
 
       {order.status === 'PENDING_PAYMENT' && (
         <>
-          {method && (
+          {method && isCrypto && <CryptoPaymentCard orderId={order.id} methodName={method.name} />}
+
+          {method && !isCrypto && (
             <Card>
               <CardContent className="flex flex-col gap-3 p-4">
                 <p className="text-sm font-semibold">الدفع عن طريق {method.name}</p>
@@ -199,9 +207,13 @@ export default function OrderDetailPage({ params }: { params: Promise<{ id: stri
 
           <Card>
             <CardContent className="flex flex-col gap-3 p-4">
-              <p className="text-sm font-semibold">ارفع إثبات الدفع</p>
+              <p className="text-sm font-semibold">
+                {isCrypto ? 'التحويل مأخدش وقته؟' : 'ارفع إثبات الدفع'}
+              </p>
               <p className="text-xs text-muted-foreground">
-                سكرين شوت أو صورة لإيصال التحويل (JPG أو PNG أو PDF). تقدر كمان تبعت الصورة مباشرة في شات البوت.
+                {isCrypto
+                  ? 'لو حوّلت وعدّت أكتر من 10 دقايق من غير تأكيد، ارفع صورة التحويل وهنراجعه يدوياً.'
+                  : 'سكرين شوت أو صورة لإيصال التحويل (JPG أو PNG أو PDF). تقدر كمان تبعت الصورة مباشرة في شات البوت.'}
               </p>
               <input
                 ref={fileInputRef}

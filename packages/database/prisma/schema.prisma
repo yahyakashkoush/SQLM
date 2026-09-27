@@ -116,6 +116,9 @@ enum OrderEventType {
   DELIVERY_STARTED
   DELIVERY_COMPLETED
   DELIVERY_FAILED
+  CRYPTO_WATCH_OPENED
+  CRYPTO_PAYMENT_DETECTED
+  CRYPTO_WATCH_EXPIRED
 }
 
 enum ActorType {
@@ -128,6 +131,23 @@ enum PaymentProofStatus {
   PENDING
   APPROVED
   REJECTED
+}
+
+/// Who settles a payment method. MANUAL keeps the screenshot-and-review
+/// flow; the exchange providers are watched by the deposit poller and
+/// settle themselves without a human ever looking at the order.
+enum PaymentProvider {
+  MANUAL
+  BINANCE
+  BYBIT
+}
+
+/// Lifecycle of one order's wait for an on-chain deposit.
+enum CryptoWatchStatus {
+  WAITING
+  MATCHED
+  EXPIRED
+  CANCELLED
 }
 
 /// How a given order item actually got fulfilled. Derived from the
@@ -368,6 +388,7 @@ model Order {
   inventoryItems InventoryItem[]
   supportTickets SupportTicket[]
   deliveries     Delivery[]
+  cryptoWatch    CryptoPaymentWatch?
 
   @@unique([customerId, idempotencyKey])
   @@index([customerId, status])
@@ -461,9 +482,98 @@ model PaymentMethod {
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
+  /// MANUAL keeps the proof-upload flow. An exchange provider makes this
+  /// method self-settling: checkout opens a CryptoPaymentWatch and the
+  /// deposit poller marks the order PAID on its own.
+  provider PaymentProvider @default(MANUAL)
+  /// Ticker as the exchange reports it on a deposit record, e.g. "USDT".
+  cryptoAsset String?
+  /// Exchange network code, e.g. "TRX", "BSC", "ETH". Deposits are matched
+  /// on it too: the same asset on the wrong chain must not settle an order.
+  cryptoNetwork String?
+  /// Where the customer sends funds. Display-only — matching keys off the
+  /// amount, so a wrong address simply never matches rather than mispaying.
+  depositAddress String?
+  /// How long a customer has to send the exact amount before the watch
+  /// expires and releases its amount back into the pool.
+  watchTtlMinutes Int @default(60)
+
   orders Order[]
+  watches CryptoPaymentWatch[]
 
   @@map("payment_methods")
+}
+
+/// One order's wait for an exact on-chain amount.
+///
+/// Deposits arrive with no order reference — an exchange deposit record
+/// carries an address, an asset and an amount, nothing that ties it to a
+/// cart. So the amount itself is the correlation key: each waiting order
+/// gets an amount no other waiting order is using, and a deposit of that
+/// amount can only belong to that order.
+model CryptoPaymentWatch {
+  id              String            @id @default(uuid())
+  orderId         String            @unique
+  order           Order             @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  paymentMethodId String
+  paymentMethod   PaymentMethod     @relation(fields: [paymentMethodId], references: [id], onDelete: Restrict)
+  provider        PaymentProvider
+  asset           String
+  network         String
+  address         String
+  /// What the customer was told to send, to 8dp. Never the order total
+  /// verbatim: a unique delta is baked in so it identifies this order.
+  expectedAmount  Decimal           @db.Decimal(24, 8)
+  status          CryptoWatchStatus @default(WAITING)
+  expiresAt       DateTime
+  matchedAt       DateTime?
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+
+  /// The uniqueness guarantee, enforced by the database rather than by the
+  /// allocator's read-then-write. Holds "provider:asset:network:amount"
+  /// while WAITING and NULL once settled — Postgres treats NULLs as
+  /// distinct, so any number of past watches may share an amount while at
+  /// most one live watch can claim it. Two concurrent checkouts racing for
+  /// the same amount: one inserts, the other hits the unique violation and
+  /// retries with the next candidate.
+  claimKey String? @unique
+
+  deposits CryptoDeposit[]
+
+  @@index([status, expiresAt])
+  @@index([provider, status])
+  @@map("crypto_payment_watches")
+}
+
+/// Every deposit the poller has ever seen, matched or not.
+///
+/// The (provider, txId) unique constraint is what makes crediting
+/// exactly-once: the poller inserts the row before acting on it, so a
+/// deposit replayed by an overlapping poll, an exchange returning it in
+/// two pages, or a worker retried after a crash all collide here and the
+/// second attempt is a no-op rather than a second payment.
+model CryptoDeposit {
+  id        String   @id @default(uuid())
+  provider  PaymentProvider
+  /// The exchange's transaction id. Unique per provider, not globally.
+  txId      String
+  asset     String
+  network   String
+  amount    Decimal  @db.Decimal(24, 8)
+  address   String?
+  /// The provider's own status string, kept verbatim for support triage.
+  rawStatus String?
+  creditedAt DateTime?
+  watchId   String?
+  watch     CryptoPaymentWatch? @relation(fields: [watchId], references: [id], onDelete: SetNull)
+  orderId   String?
+  seenAt    DateTime @default(now())
+
+  @@unique([provider, txId])
+  @@index([watchId])
+  @@index([seenAt])
+  @@map("crypto_deposits")
 }
 
 model PaymentProof {

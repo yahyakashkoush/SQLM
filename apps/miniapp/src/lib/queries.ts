@@ -45,6 +45,21 @@ export function useOrder(id: string) {
   });
 }
 
+/**
+ * Polls the deposit watch while the customer is on the payment screen.
+ * Faster than the order poll because this is the screen someone sits and
+ * stares at after sending funds — it is what turns "I paid" into a
+ * confirmed order without them doing anything else.
+ */
+export function useCryptoPayment(orderId: string, enabled: boolean) {
+  return useQuery({
+    queryKey: ['crypto-payment', orderId],
+    queryFn: () => api.getCryptoPayment(orderId),
+    enabled,
+    refetchInterval: (query) => (query.state.data?.status === 'WAITING' ? 5000 : false),
+  });
+}
+
 export function useDeliveries(orderId: string, enabled: boolean) {
   return useQuery({
     queryKey: ['deliveries', orderId],

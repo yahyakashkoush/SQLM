@@ -26,6 +26,8 @@ import { NotificationsModule } from './modules/notifications/notifications.modul
 import { SupportModule } from './modules/support/support.module';
 import { AdminModule } from './modules/admin/admin.module';
 import { CleanupModule } from './modules/cleanup/cleanup.module';
+import { CryptoWatchModule } from './modules/crypto-payments/crypto-watch.module';
+import { CryptoPaymentsModule } from './modules/crypto-payments/crypto-payments.module';
 import { SettingsModule } from './modules/settings/settings.module';
 
 @Module({
@@ -95,6 +97,8 @@ import { SettingsModule } from './modules/settings/settings.module';
     SupportModule,
     AdminModule,
     CleanupModule,
+    CryptoWatchModule,
+    CryptoPaymentsModule,
   ],
   controllers: [AppController],
   providers: [{ provide: APP_GUARD, useClass: ThrottlerGuard }],

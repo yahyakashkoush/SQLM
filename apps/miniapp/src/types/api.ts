@@ -35,6 +35,8 @@ export interface Product {
   tags: string[];
 }
 
+export type PaymentProvider = 'MANUAL' | 'BINANCE' | 'BYBIT';
+
 export interface PaymentMethod {
   id: string;
   name: string;
@@ -43,6 +45,24 @@ export interface PaymentMethod {
   instructions: string | null;
   qrCodeUrl: string | null;
   currency: string;
+  provider?: PaymentProvider;
+}
+
+/** The live deposit watch behind a self-settling payment method. */
+export interface CryptoPayment {
+  orderId: string;
+  provider: PaymentProvider;
+  asset: string;
+  network: string;
+  address: string;
+  /** The exact amount to send — the order total plus its identifying delta. */
+  amount: string;
+  status: 'WAITING' | 'MATCHED' | 'EXPIRED' | 'CANCELLED';
+  expiresAt: string;
+  matchedAt: string | null;
+  /** False when the store has no key for this exchange, so nothing is
+   *  actually watching and the customer must still upload a receipt. */
+  autoConfirmActive: boolean;
 }
 
 export interface OrderItem {

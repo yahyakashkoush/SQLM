@@ -15,4 +15,5 @@ export const QUEUE_NAMES = {
   INVENTORY: 'inventory',
   CLEANUP: 'cleanup',
   ANALYTICS: 'analytics',
+  CRYPTO_DEPOSITS: 'crypto-deposits',
 } as const;

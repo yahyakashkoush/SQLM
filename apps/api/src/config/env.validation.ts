@@ -50,6 +50,27 @@ export const envSchema = z.object({
   API_BASE_URL: optionalString(),
   MINIAPP_URL: optionalString(),
 
+  /**
+   * Exchange credentials for automatic crypto settlement. Read-only keys
+   * are enough — the poller only ever lists deposit history, and a key
+   * without withdrawal permission cannot move funds if this host is
+   * compromised. A provider whose key is absent stays switched off rather
+   * than failing boot, so a store can run one exchange, both, or neither.
+   */
+  BINANCE_API_KEY: optionalString(z.string().min(1)),
+  BINANCE_API_SECRET: optionalString(z.string().min(1)),
+  BINANCE_API_BASE_URL: z.string().url().default('https://api.binance.com'),
+  BYBIT_API_KEY: optionalString(z.string().min(1)),
+  BYBIT_API_SECRET: optionalString(z.string().min(1)),
+  BYBIT_API_BASE_URL: z.string().url().default('https://api.bybit.com'),
+  /** How often the deposit poller sweeps each configured exchange. */
+  CRYPTO_POLL_INTERVAL_MS: z.coerce.number().int().min(5000).default(40000),
+  /**
+   * Deposits older than this are ignored on startup sweeps, so a fresh
+   * deploy doesn't walk months of history trying to match closed orders.
+   */
+  CRYPTO_DEPOSIT_LOOKBACK_MINUTES: z.coerce.number().int().positive().default(360),
+
   SENTRY_DSN: optionalString(),
   LOG_LEVEL: z.string().default('info'),
 
