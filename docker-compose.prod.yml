@@ -33,6 +33,14 @@ x-api-env: &api-env
   API_BASE_URL: https://${API_DOMAIN:?API_DOMAIN is required}
   CORS_ORIGINS: ${CORS_ORIGINS:?CORS_ORIGINS is required in production}
   MINIAPP_URL: ${MINIAPP_URL:?MINIAPP_URL is required}
+  # Read-only exchange keys for crypto auto-settlement. Blank by default:
+  # an unset pair switches that exchange off rather than failing the boot.
+  BINANCE_API_KEY: ${BINANCE_API_KEY:-}
+  BINANCE_API_SECRET: ${BINANCE_API_SECRET:-}
+  BYBIT_API_KEY: ${BYBIT_API_KEY:-}
+  BYBIT_API_SECRET: ${BYBIT_API_SECRET:-}
+  CRYPTO_POLL_INTERVAL_MS: ${CRYPTO_POLL_INTERVAL_MS:-40000}
+  CRYPTO_DEPOSIT_LOOKBACK_MINUTES: ${CRYPTO_DEPOSIT_LOOKBACK_MINUTES:-360}
   SENTRY_DSN: ${SENTRY_DSN:-}
   LOG_LEVEL: ${LOG_LEVEL:-info}
   RATE_LIMIT_MAX: ${RATE_LIMIT_MAX:-120}
