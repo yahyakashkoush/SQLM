@@ -52,11 +52,16 @@ export function CryptoPaymentCard({ orderId, methodName }: { orderId: string; me
     );
   }
 
-  if (error || !data) {
+  // Only when there is nothing to show. A failed refetch still has the last
+  // good payload, and blanking the address mid-transfer over one bad poll is
+  // worse than showing slightly stale details.
+  if (!data) {
     return (
       <Card className="border-destructive/40">
         <CardContent className="p-4 text-sm text-destructive">
-          تعذّر تجهيز بيانات الدفع. جرّب تحدّث الصفحة أو كلّم الدعم.
+          {error
+            ? 'تعذّر تجهيز بيانات الدفع. جرّب تحدّث الصفحة أو كلّم الدعم.'
+            : 'مفيش بيانات دفع للطلب ده.'}
         </CardContent>
       </Card>
     );

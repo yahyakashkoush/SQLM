@@ -1,5 +1,5 @@
 import './common/bigint-json';
-import { Module } from '@nestjs/common';
+import { Module, type ExecutionContext } from '@nestjs/common';
 import { APP_GUARD } from '@nestjs/core';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { LoggerModule } from 'nestjs-pino';
@@ -73,6 +73,13 @@ import { SettingsModule } from './modules/settings/settings.module';
           name: 'auth',
           ttl: config.get<number>('AUTH_RATE_LIMIT_WINDOW_MS', 60000),
           limit: config.get<number>('AUTH_RATE_LIMIT_MAX', 5),
+          // Every named profile is evaluated on every route: `@Throttle({
+          // auth: {} })` on the login handlers overrides this profile's
+          // numbers there, it does not scope the profile to them. Without
+          // this guard the 5-per-minute brute-force budget applied to the
+          // whole API, so any client making a 6th call of any kind within
+          // a minute got a 429.
+          skipIf: (context) => !isBruteForceTarget(context),
         },
       ],
     }),
@@ -104,3 +111,18 @@ import { SettingsModule } from './modules/settings/settings.module';
   providers: [{ provide: APP_GUARD, useClass: ThrottlerGuard }],
 })
 export class AppModule {}
+
+/**
+ * The credential-guessing surface: the only endpoints that accept a secret
+ * and answer whether it was right. Matched on the path's tail so the global
+ * prefix and API version can change without silently widening the limit.
+ */
+const BRUTE_FORCE_ROUTES = [/\/auth\/staff\/login$/, /\/auth\/telegram$/];
+
+function isBruteForceTarget(context: ExecutionContext): boolean {
+  if (context.getType() !== 'http') return false;
+  const request = context.switchToHttp().getRequest<{ method?: string; path?: string; url?: string }>();
+  if (request.method !== 'POST') return false;
+  const path = (request.path ?? request.url ?? '').split('?')[0] ?? '';
+  return BRUTE_FORCE_ROUTES.some((route) => route.test(path));
+}
