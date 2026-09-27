@@ -27,3 +27,13 @@ dist
 coverage
 *.log
 .DS_Store
+
+# Anything an operator installs next to the checkout still lands in the
+# build context, and the context is sent once per image. A self-hosted
+# runner unpacked here took the context from 700KB to 450MB, copied six
+# times over, and filled the host's disk mid-deploy.
+actions-runner
+**/actions-runner
+# Local volume mounts (docker-compose.yml's `infra/data`) — host state,
+# never part of an image, and they grow without bound.
+infra/data
