@@ -31,6 +31,13 @@ RUN pnpm --filter @sqlm/shared build \
 FROM base AS runtime
 ENV NODE_ENV=production
 ENV PORT=3000
+# Next's standalone server binds to $HOSTNAME, and Docker sets that to
+# the container id — so it listened only on the container's own address.
+# Caddy reaches it by service name either way, which hid this, but the
+# healthcheck dials 127.0.0.1 and always failed: the container reported
+# unhealthy forever, and a frontend that really died looked the same as
+# one that was fine.
+ENV HOSTNAME=0.0.0.0
 RUN groupadd -r sqlm && useradd -r -m -g sqlm sqlm
 
 COPY --from=build /repo/apps/web/.next/standalone ./
