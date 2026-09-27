@@ -7,6 +7,7 @@ import { Prisma } from '@prisma/client';
 import { AppModule } from '../src/app.module';
 import { configureApp } from '../src/bootstrap';
 import { PrismaService } from '../src/modules/prisma/prisma.service';
+import { PaymentMethodsService } from '../src/modules/payments/payment-methods.service';
 import { DepositPollerService } from '../src/modules/crypto-payments/deposit-poller.service';
 import { CryptoWatchService } from '../src/modules/crypto-payments/crypto-watch.service';
 import { ExchangeRegistry } from '../src/modules/crypto-payments/exchange/exchange-registry.service';
@@ -222,6 +223,51 @@ describe('Crypto auto-payments (e2e)', () => {
       const orderId = await checkout(customer.token, manualMethodId);
       const watch = await prisma.cryptoPaymentWatch.findUnique({ where: { orderId } });
       expect(watch).toBeNull();
+    });
+  });
+
+  describe('method configuration', () => {
+    // Swapping the network without replacing the address is the one mistake
+    // in this feature that destroys money instead of failing: a deposit sent
+    // to an address from another chain is normally unrecoverable, and nothing
+    // downstream can catch it because the poller only sees deposits that did
+    // arrive. So it has to be refused at save time.
+    const methods = () => app.get(PaymentMethodsService);
+    const evmAddress = '0x79e27f54b7d3d49b5a1ab6820fd94c81c3f116ee';
+    const tronAddress = 'TEsNLZMOaZfxwEEhcgQxkvcCNGLZBdxCMt';
+
+    async function save(network: string, address: string) {
+      return methods().create({
+        name: `cfg-${network}-${Date.now()}`,
+        currency: 'USD',
+        enabled: true,
+        provider: 'BINANCE',
+        cryptoAsset: 'USDT',
+        cryptoNetwork: network,
+        depositAddress: address,
+      } as never);
+    }
+
+    it('refuses an EVM address on Tron', async () => {
+      await expect(save('TRX', evmAddress)).rejects.toThrow(/not a valid TRX address/);
+    });
+
+    it('refuses an EVM address on Solana', async () => {
+      await expect(save('SOL', evmAddress)).rejects.toThrow(/not a valid SOL address/);
+    });
+
+    it('refuses a Tron address on an EVM chain', async () => {
+      await expect(save('BSC', tronAddress)).rejects.toThrow(/not a valid BSC address/);
+    });
+
+    it('accepts an address that matches its network', async () => {
+      const created = await save('BSC', evmAddress);
+      expect(created.cryptoNetwork).toBe('BSC');
+      await prisma.paymentMethod.delete({ where: { id: created.id } });
+    });
+
+    it('refuses a crypto method with no address at all', async () => {
+      await expect(save('TRX', '')).rejects.toThrow(/depositAddress/);
     });
   });
 

@@ -86,4 +86,40 @@ function assertUsableForSettlement(
       `A ${provider} payment method needs ${missing.join(', ')} — without them no deposit can be matched to an order.`,
     );
   }
+
+  assertAddressMatchesNetwork(fields.cryptoNetwork!, fields.depositAddress!);
+}
+
+/**
+ * Address shapes that are unambiguous enough to reject on.
+ *
+ * Switching the network dropdown without replacing the address is the one
+ * mistake here that destroys money rather than just failing: funds sent to
+ * an address that is valid on a different chain are usually unrecoverable.
+ * Nothing downstream can catch it — the poller only ever sees deposits that
+ * did arrive — so it has to be caught before the method is saved.
+ *
+ * Only clear mismatches are rejected. A chain whose format this does not
+ * know is left to the operator, since a wrong guess here would block a
+ * legitimate address.
+ */
+const ADDRESS_SHAPES: Record<string, { pattern: RegExp; describe: string }> = {
+  ETH: { pattern: /^0x[0-9a-fA-F]{40}$/, describe: '0x followed by 40 hex characters' },
+  BSC: { pattern: /^0x[0-9a-fA-F]{40}$/, describe: '0x followed by 40 hex characters' },
+  MATIC: { pattern: /^0x[0-9a-fA-F]{40}$/, describe: '0x followed by 40 hex characters' },
+  ARBITRUM: { pattern: /^0x[0-9a-fA-F]{40}$/, describe: '0x followed by 40 hex characters' },
+  TRX: { pattern: /^T[1-9A-HJ-NP-Za-km-z]{33}$/, describe: 'T followed by 33 base58 characters' },
+  SOL: { pattern: /^[1-9A-HJ-NP-Za-km-z]{32,44}$/, describe: '32-44 base58 characters, never 0x' },
+  TON: { pattern: /^[EU]Q[0-9A-Za-z_-]{46}$/, describe: 'EQ or UQ followed by 46 characters' },
+};
+
+function assertAddressMatchesNetwork(network: string, address: string): void {
+  const shape = ADDRESS_SHAPES[network];
+  if (!shape || shape.pattern.test(address)) return;
+
+  throw new BadRequestException(
+    `That deposit address is not a valid ${network} address (expected ${shape.describe}). ` +
+      'Copy the address Binance or Bybit shows for this exact asset and network — a deposit ' +
+      'sent to an address from a different chain is normally lost for good.',
+  );
 }
