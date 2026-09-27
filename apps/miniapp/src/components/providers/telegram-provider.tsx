@@ -3,7 +3,7 @@
 import { createContext, useContext, useEffect, useState } from 'react';
 import Script from 'next/script';
 import { useAuthStore } from '@/store/auth-store';
-import { api, ApiError } from '@/lib/api';
+import { api, ApiError, setTelegramInitData } from '@/lib/api';
 
 interface TelegramContextValue {
   ready: boolean;
@@ -46,6 +46,11 @@ export function TelegramProvider({ children }: { children: React.ReactNode }) {
     webApp.ready();
     webApp.expand();
     setInTelegram(true);
+
+    // Hand initData to the API client before the early return below: a
+    // stored token may already be expired, and this is what lets the
+    // client mint a new one when the first authenticated call is refused.
+    setTelegramInitData(webApp.initData || null);
 
     if (hasSession) {
       setReady(true);

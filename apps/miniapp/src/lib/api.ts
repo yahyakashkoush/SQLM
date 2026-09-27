@@ -25,7 +25,51 @@ export class ApiError extends Error {
   }
 }
 
-async function request<T>(path: string, init: RequestInit = {}, auth = false): Promise<T> {
+/**
+ * A customer access token lives 24h and there is no refresh token — the
+ * Mini App re-derives a session from Telegram's initData instead. But the
+ * provider only authenticates when no token is stored, and the store is
+ * persisted, so a customer returning after 24h kept presenting the dead
+ * token: every authenticated call failed with "Invalid or expired session"
+ * and nothing ever replaced it. Checkout was a permanent dead end until
+ * they cleared the app's storage by hand.
+ *
+ * Recovering here rather than at each call site means anything that talks
+ * to the API self-heals on the first 401.
+ */
+let telegramInitData: string | null = null;
+let reauthInFlight: Promise<boolean> | null = null;
+
+export function setTelegramInitData(initData: string | null): void {
+  telegramInitData = initData;
+}
+
+/** Shared so a page firing several requests at once re-authenticates once. */
+function reauthenticate(): Promise<boolean> {
+  if (!telegramInitData) return Promise.resolve(false);
+
+  return (reauthInFlight ??= (async () => {
+    try {
+      const res = await api.authenticateTelegram(telegramInitData!);
+      useAuthStore.getState().setSession(res.accessToken, res.customer);
+      return true;
+    } catch {
+      // initData itself is rejected now — drop the session so the provider
+      // shows the sign-in error instead of retrying forever.
+      useAuthStore.getState().clearSession();
+      return false;
+    } finally {
+      reauthInFlight = null;
+    }
+  })());
+}
+
+async function request<T>(
+  path: string,
+  init: RequestInit = {},
+  auth = false,
+  isRetry = false,
+): Promise<T> {
   const headers = new Headers(init.headers);
   if (!(init.body instanceof FormData)) {
     headers.set('Content-Type', 'application/json');
@@ -36,6 +80,12 @@ async function request<T>(path: string, init: RequestInit = {}, auth = false): P
   }
 
   const res = await fetch(`${API_URL}/api/v1${path}`, { ...init, headers, cache: 'no-store' });
+
+  // Once only: a second 401 means the fresh token is being rejected too,
+  // which is a real failure rather than an expired session.
+  if (res.status === 401 && auth && !isRetry && (await reauthenticate())) {
+    return request<T>(path, init, auth, true);
+  }
 
   if (!res.ok) {
     const body = (await res.json().catch(() => ({ message: res.statusText }))) as { message?: string | string[] };
