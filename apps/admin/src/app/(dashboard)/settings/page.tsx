@@ -10,6 +10,12 @@ import { useAuthStore } from '@/store/auth-store';
 
 const GROUPS: Array<{ key: SettingDefinitionRow['group']; title: string; description: string }> = [
   { key: 'store', title: 'Store', description: 'Basic store identity shown to customers.' },
+  { key: 'pricing', title: 'Pricing & currency', description: 'Prices are in USD; EGP payment methods show the converted amount.' },
+  {
+    key: 'customers',
+    title: 'Customers & loyalty',
+    description: 'Verified (مميز) customer discount and the first-order welcome gift for regular customers.',
+  },
   { key: 'delivery', title: 'Delivery message', description: 'What the customer receives on Telegram when an item is delivered.' },
   { key: 'orders', title: 'Order messages', description: 'Telegram messages sent when a payment is approved or rejected.' },
   { key: 'bot', title: 'Bot replies', description: 'Texts for /start and the bot menu buttons.' },
@@ -74,6 +80,9 @@ export default function SettingsPage() {
             id={s.key}
             dir="auto"
             type={s.type === 'number' ? 'number' : 'text'}
+            min={s.min}
+            max={s.max}
+            step={s.type === 'number' ? 'any' : undefined}
             disabled={readOnly}
             value={String(value ?? '')}
             onChange={(e) => setValue(s.key, s.type === 'number' ? Number(e.target.value) : e.target.value)}

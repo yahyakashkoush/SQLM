@@ -8,11 +8,16 @@ import { NotificationDispatcher } from '../notifications/notification-dispatcher
 import { InventoryService } from '../inventory/inventory.service';
 import { InsufficientInventoryError } from '../inventory/errors/insufficient-inventory.error';
 import { assertTransitionAllowed, InvalidOrderTransitionError } from './order-state-machine';
-import { PaymentMethodUnavailableError, OrderNotCancellableError } from './errors/order.errors';
+import {
+  PaymentMethodUnavailableError,
+  OrderNotCancellableError,
+  OrderPriceChangedError,
+} from './errors/order.errors';
 import { CryptoWatchService } from '../crypto-payments/crypto-watch.service';
 import { CouponsService } from '../coupons/coupons.service';
+import { LoyaltyService } from '../loyalty/loyalty.service';
 import { CartPricingService } from './cart-pricing.service';
-import type { CheckoutDto } from './dto/checkout.dto';
+import type { CheckoutDto, QuoteOrderDto } from './dto/checkout.dto';
 import type { OrderQueryDto } from './dto/order-query.dto';
 
 type PrismaTx = Prisma.TransactionClient;
@@ -48,6 +53,7 @@ export class OrdersService {
     private readonly cryptoWatch: CryptoWatchService,
     private readonly pricing: CartPricingService,
     private readonly coupons: CouponsService,
+    private readonly loyalty: LoyaltyService,
   ) {}
 
   /**
@@ -75,16 +81,23 @@ export class OrdersService {
       throw new PaymentMethodUnavailableError(dto.paymentMethodId);
     }
 
-    const { currency, subtotal, productById } = await this.pricing.priceCart(dto.items);
+    // Priced before the transaction opens, by the same function the quote
+    // endpoint uses, so the customer is charged the total they were shown.
+    // Claims (gift, coupon) happen inside the transaction below.
+    const quote = await this.pricing.quote(customerId, dto.items, dto.couponCode);
+    const { currency, subtotal, productById, member, discountTotal, total } = quote;
+    const couponQuote = quote.coupon;
 
-    // Priced before the transaction opens, against the same cart the quote
-    // endpoint prices, so the customer is charged the total they were
-    // shown. The redemption itself happens inside the transaction below.
-    const couponQuote = dto.couponCode
-      ? await this.coupons.quote(dto.couponCode, customerId, subtotal)
-      : null;
-    const discountTotal = couponQuote?.discount ?? new Prisma.Decimal(0);
-    const total = subtotal.sub(discountTotal);
+    // The client sends the total it displayed. If anything moved since —
+    // a discount setting, the coupon, the gift — refuse rather than charge
+    // a number the customer never saw.
+    if (dto.expectedTotal !== undefined && !total.equals(dto.expectedTotal)) {
+      throw new OrderPriceChangedError(String(dto.expectedTotal), total.toString());
+    }
+
+    // Frozen onto the order with its rate, so the EGP amount an order asks
+    // for never moves when the admin changes the rate later.
+    const conversion = await this.pricing.conversionFor(total, currency, paymentMethod);
 
     try {
       const order = await this.prisma.$transaction(async (tx) => {
@@ -94,13 +107,24 @@ export class OrdersService {
             currency,
             subtotal,
             discountTotal,
+            memberDiscount: member?.amount ?? 0,
+            memberDiscountKind: member?.kind,
             total,
             couponId: couponQuote?.couponId,
             couponCode: couponQuote?.code,
+            payCurrency: conversion?.currency,
+            payAmount: conversion?.amount,
+            exchangeRate: conversion?.rate,
             paymentMethodId: dto.paymentMethodId,
             idempotencyKey: dto.idempotencyKey,
           },
         });
+
+        // A welcome gift the quote included must be claimable now; if a
+        // concurrent first order took it, this checkout's price is wrong.
+        if (member?.kind === 'WELCOME' && !(await this.loyalty.claimWelcomeGift(tx, customerId, created.id))) {
+          throw new OrderPriceChangedError(total.toString(), total.add(member.amount).toString());
+        }
 
         if (couponQuote) {
           // Inside the transaction: if anything below fails — out of
@@ -182,6 +206,42 @@ export class OrdersService {
   }
 
   /**
+   * The checkout page's price: every line of the breakdown, and what the
+   * transfer comes to with each enabled payment method. Same pricing
+   * function as `checkout`, so what is shown here is what is charged.
+   */
+  async quoteForCustomer(customerId: string, dto: QuoteOrderDto) {
+    const quote = await this.pricing.quote(customerId, dto.items, dto.couponCode);
+    const methods = await this.prisma.paymentMethod.findMany({
+      where: { enabled: true },
+      select: { id: true, currency: true, provider: true },
+    });
+    const paymentOptions = await Promise.all(
+      methods.map(async (method) => {
+        const conversion = await this.pricing.conversionFor(quote.total, quote.currency, method);
+        return {
+          paymentMethodId: method.id,
+          currency: conversion?.currency ?? quote.currency,
+          amount: (conversion?.amount ?? quote.total).toString(),
+          rate: conversion?.rate.toString() ?? null,
+        };
+      }),
+    );
+
+    return {
+      currency: quote.currency,
+      subtotal: quote.subtotal.toString(),
+      member: quote.member
+        ? { kind: quote.member.kind, percent: quote.member.percent, amount: quote.member.amount.toString() }
+        : null,
+      coupon: quote.coupon ? { code: quote.coupon.code, discount: quote.coupon.discount.toString() } : null,
+      discountTotal: quote.discountTotal.toString(),
+      total: quote.total.toString(),
+      paymentOptions,
+    };
+  }
+
+  /**
    * The only code path allowed to write `Order.status`. Validates the
    * transition, updates the row, and records an `OrderEvent` — always
    * together, always in the caller's transaction. Side effects (releasing
@@ -237,9 +297,15 @@ export class OrdersService {
 
     if (toStatus === 'CANCELLED') {
       await this.releaseInventoryForOrder(tx, orderId);
+      // An order that never went through should not cost the customer
+      // their gift or a use of their coupon.
+      await this.loyalty.releaseWelcomeGift(tx, orderId);
+      await this.coupons.releaseForOrder(tx, orderId);
     }
+    let becameVerified = false;
     if (toStatus === 'PAID') {
       await this.inventory.markIndividualItemsSold(tx, orderId);
+      becameVerified = await this.loyalty.verifyOnPayment(tx, order.customerId);
     }
 
     // Best-effort: dispatcher swallows its own failures, so an unreachable
@@ -260,6 +326,18 @@ export class OrdersService {
       silent: message === null,
       button: { text: '📦 عرض الطلب', url: `${miniAppUrl}/orders/${orderId}` },
     });
+
+    if (becameVerified) {
+      const customer = await tx.customer.findUnique({
+        where: { id: order.customerId },
+        select: { firstName: true },
+      });
+      await this.notifications.notifyCustomer(order.customerId, {
+        kind: 'customer.verified',
+        summary: await this.loyalty.verifiedMessage(customer?.firstName ?? null, tx),
+        button: { text: '🛍️ تسوّق بخصمك', url: miniAppUrl },
+      });
+    }
 
     return updated;
   }

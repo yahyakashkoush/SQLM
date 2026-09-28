@@ -34,3 +34,20 @@ export class OrderNotCancellableError extends DomainError {
     this.name = 'OrderNotCancellableError';
   }
 }
+
+/**
+ * The total checkout computed is not the one the customer was shown —
+ * a setting changed, their welcome gift was just taken by another order,
+ * or a coupon ran out between the quote and the tap. Refused rather than
+ * charged, and in Arabic because the Mini App shows it as-is and
+ * re-quotes.
+ */
+export class OrderPriceChangedError extends DomainError {
+  readonly httpStatus = HttpStatus.CONFLICT;
+  readonly code = 'PRICE_CHANGED';
+
+  constructor(public readonly expected: string, public readonly actual: string) {
+    super(`السعر اتغيّر من ${expected} لـ ${actual} — راجع الإجمالي الجديد وأكّد تاني.`);
+    this.name = 'OrderPriceChangedError';
+  }
+}

@@ -56,6 +56,11 @@ export default function OrderDetailPage({ params }: { params: Promise<{ id: stri
   }
 
   const method = order.paymentMethod;
+  // What to transfer: the converted amount when the method is in another
+  // currency (USD prices paid in EGP), otherwise the total itself.
+  const payAmount = order.payAmount ?? order.total;
+  const payCurrency = order.payCurrency ?? order.currency;
+  const couponShare = Number(order.discountTotal) - Number(order.memberDiscount ?? 0);
   const isCrypto = Boolean(method?.provider && method.provider !== 'MANUAL');
   const lastProof = order.paymentProofs?.[0];
   const rejected = order.status === 'PENDING_PAYMENT' && lastProof?.status === 'REJECTED' ? lastProof : null;
@@ -186,16 +191,30 @@ export default function OrderDetailPage({ params }: { params: Promise<{ id: stri
                 <span>المجموع</span>
                 <span>{formatMoney(order.subtotal, order.currency)}</span>
               </div>
-              <div className="flex items-center justify-between text-sm text-success">
-                <span>خصم {order.couponCode ? `(${order.couponCode})` : ''}</span>
-                <span>−{formatMoney(order.discountTotal, order.currency)}</span>
-              </div>
+              {Number(order.memberDiscount) > 0 && (
+                <div className="flex items-center justify-between text-sm text-success">
+                  <span>{order.memberDiscountKind === 'WELCOME' ? '🎁 هدية أول طلب' : '⭐ خصم العميل المميز'}</span>
+                  <span>−{formatMoney(order.memberDiscount, order.currency)}</span>
+                </div>
+              )}
+              {couponShare > 0 && (
+                <div className="flex items-center justify-between text-sm text-success">
+                  <span>خصم {order.couponCode ? `(${order.couponCode})` : ''}</span>
+                  <span>−{formatMoney(couponShare, order.currency)}</span>
+                </div>
+              )}
             </>
           )}
           <div className="flex items-center justify-between text-sm font-semibold">
             <span>الإجمالي</span>
             <span>{formatMoney(order.total, order.currency)}</span>
           </div>
+          {order.payAmount && order.payCurrency && (
+            <div className="flex items-center justify-between rounded-md bg-primary/5 px-2 py-1.5 text-sm">
+              <span>المطلوب تحويله</span>
+              <span className="font-semibold">{formatMoney(payAmount, payCurrency)}</span>
+            </div>
+          )}
         </CardContent>
       </Card>
 
@@ -210,9 +229,14 @@ export default function OrderDetailPage({ params }: { params: Promise<{ id: stri
                 <div className="flex items-center justify-between gap-2 rounded-lg bg-muted p-3">
                   <div>
                     <p className="text-xs text-muted-foreground">المبلغ المطلوب</p>
-                    <p className="text-lg font-bold">{formatMoney(order.total, order.currency)}</p>
+                    <p className="text-lg font-bold">{formatMoney(payAmount, payCurrency)}</p>
+                    {order.payAmount && order.exchangeRate && (
+                      <p className="text-xs text-muted-foreground">
+                        = {formatMoney(order.total, order.currency)} × {Number(order.exchangeRate)}
+                      </p>
+                    )}
                   </div>
-                  <CopyButton value={String(Number(order.total))} label="نسخ المبلغ" />
+                  <CopyButton value={String(Number(payAmount))} label="نسخ المبلغ" />
                 </div>
                 {method.accountNumber && (
                   <div className="flex items-center justify-between gap-2 rounded-lg bg-muted p-3">

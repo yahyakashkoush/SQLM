@@ -1,10 +1,12 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import * as argon2 from 'argon2';
-import type { OrderStatus, Role } from '@sqlm/shared';
+import { CUSTOMER_SEGMENTS, SETTING_DEFINITIONS, type OrderStatus, type Role } from '@sqlm/shared';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
 import { SettingsService } from '../settings/settings.service';
+import { LoyaltyService } from '../loyalty/loyalty.service';
+import { segmentWhere } from '../customers/customer-segments';
 import type {
   AuditLogQueryDto,
   CreateStaffDto,
@@ -33,6 +35,7 @@ export class AdminService {
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
     private readonly settings: SettingsService,
+    private readonly loyalty: LoyaltyService,
   ) {}
 
   /**
@@ -167,15 +170,21 @@ export class AdminService {
   async listCustomers(query: CustomerQueryDto) {
     const page = query.page ?? 1;
     const pageSize = query.pageSize ?? 20;
-    const where: Prisma.CustomerWhereInput = query.search
-      ? {
-          OR: [
-            { firstName: { contains: query.search, mode: 'insensitive' } },
-            { lastName: { contains: query.search, mode: 'insensitive' } },
-            { telegramUsername: { contains: query.search, mode: 'insensitive' } },
-          ],
-        }
-      : {};
+    const search = query.search?.trim().replace(/^@/, '');
+    const where: Prisma.CustomerWhereInput = {
+      // No segment means everyone, blocked customers included — this is
+      // the staff view, unlike a broadcast audience.
+      ...(query.segment ? segmentWhere(query.segment) : {}),
+      ...(search
+        ? {
+            OR: [
+              { firstName: { contains: search, mode: 'insensitive' } },
+              { lastName: { contains: search, mode: 'insensitive' } },
+              { telegramUsername: { contains: search, mode: 'insensitive' } },
+            ],
+          }
+        : {}),
+    };
 
     const [items, total] = await this.prisma.$transaction([
       this.prisma.customer.findMany({
@@ -189,6 +198,7 @@ export class AdminService {
           lastName: true,
           telegramUsername: true,
           status: true,
+          verifiedAt: true,
           createdAt: true,
           _count: { select: { orders: true, supportTickets: true } },
         },
@@ -196,7 +206,48 @@ export class AdminService {
       this.prisma.customer.count({ where }),
     ]);
 
-    return { items, page, pageSize, total, totalPages: Math.max(1, Math.ceil(total / pageSize)) };
+    // What each customer on this page has actually paid, in one query for
+    // the page rather than one per row.
+    const spend = await this.prisma.order.groupBy({
+      by: ['customerId'],
+      where: { customerId: { in: items.map((c) => c.id) }, status: { in: REVENUE_STATUSES } },
+      _sum: { total: true },
+      _count: true,
+    });
+    const spendByCustomer = new Map(spend.map((row) => [row.customerId, row]));
+
+    return {
+      items: items.map((c) => ({
+        ...c,
+        paidOrders: spendByCustomer.get(c.id)?._count ?? 0,
+        totalSpent: spendByCustomer.get(c.id)?._sum.total?.toString() ?? '0',
+      })),
+      page,
+      pageSize,
+      total,
+      totalPages: Math.max(1, Math.ceil(total / pageSize)),
+    };
+  }
+
+  /** Audience sizes, one count per segment, in a single round-trip. */
+  async segmentCounts() {
+    const now = new Date();
+    const counts = await this.prisma.$transaction(
+      CUSTOMER_SEGMENTS.map((segment) => this.prisma.customer.count({ where: segmentWhere(segment, now) })),
+    );
+    return CUSTOMER_SEGMENTS.map((segment, i) => ({ segment, count: counts[i] ?? 0 }));
+  }
+
+  async setCustomerVerified(id: string, verified: boolean, actorStaffId: string) {
+    const result = await this.loyalty.setVerified(id, verified);
+    await this.audit.log({
+      actorStaffId,
+      action: verified ? 'customer.verify' : 'customer.unverify',
+      entityType: 'Customer',
+      entityId: id,
+      changes: { verified },
+    });
+    return result;
   }
 
   async getCustomer(id: string) {
@@ -208,6 +259,8 @@ export class AdminService {
         lastName: true,
         telegramUsername: true,
         status: true,
+        verifiedAt: true,
+        welcomeGiftOrderId: true,
         createdAt: true,
         orders: {
           select: { id: true, sequenceNumber: true, status: true, total: true, createdAt: true },
@@ -222,7 +275,17 @@ export class AdminService {
       },
     });
     if (!customer) throw new NotFoundException('Customer not found');
-    return customer;
+
+    const spend = await this.prisma.order.aggregate({
+      where: { customerId: id, status: { in: REVENUE_STATUSES } },
+      _sum: { total: true },
+      _count: true,
+    });
+    return {
+      ...customer,
+      paidOrders: spend._count,
+      totalSpent: spend._sum.total?.toString() ?? '0',
+    };
   }
 
   async listStaff() {
@@ -325,6 +388,7 @@ export class AdminService {
   }
 
   async updateSetting(key: string, dto: UpdateSettingDto, actorStaffId: string) {
+    assertSettingValue(key, dto.value);
     const setting = await this.prisma.platformSetting.upsert({
       where: { key },
       create: { key, value: dto.value as never, updatedByStaffId: actorStaffId },
@@ -341,4 +405,33 @@ export class AdminService {
     });
     return setting;
   }
+}
+
+/**
+ * Known settings are checked against their definition before they are
+ * stored. The rate and the discount percentages feed straight into what
+ * customers are charged, so a blank field saved as 0 or a typo like 500%
+ * has to be refused here rather than discovered on an order.
+ */
+function assertSettingValue(key: string, value: unknown): void {
+  const def = SETTING_DEFINITIONS.find((d) => d.key === key);
+  if (!def) return;
+
+  if (def.type === 'number') {
+    if (typeof value !== 'number' || !Number.isFinite(value)) {
+      throw new BadRequestException(`${def.label} must be a number`);
+    }
+    if (def.min !== undefined && value < def.min) {
+      throw new BadRequestException(`${def.label} must be at least ${def.min}`);
+    }
+    if (def.max !== undefined && value > def.max) {
+      throw new BadRequestException(`${def.label} must be at most ${def.max}`);
+    }
+    return;
+  }
+  if (def.type === 'boolean') {
+    if (typeof value !== 'boolean') throw new BadRequestException(`${def.label} must be true or false`);
+    return;
+  }
+  if (typeof value !== 'string') throw new BadRequestException(`${def.label} must be text`);
 }

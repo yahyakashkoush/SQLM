@@ -3,15 +3,16 @@ import { Logger } from '@nestjs/common';
 import type { Job } from 'bullmq';
 import { PrismaService } from '../prisma/prisma.service';
 import { TelegramBotService } from '../telegram/telegram-bot.service';
+import { StaffNotifier } from '../telegram/staff-notifier.service';
 import { QUEUE_NAMES } from '../queue/queue-names';
 import type { NotificationJob } from './notification-dispatcher.service';
 import { DeliveryMessageRenderer } from './delivery-message.renderer';
 
 /**
  * Durable leg of notification delivery: pushes customer-facing events to
- * Telegram. Staff-audience events are realtime-only (the dashboard is the
- * staff channel), so they complete immediately here rather than fanning out
- * to every staff member's chat.
+ * Telegram, and staff events to the staff members who linked their
+ * Telegram account (see StaffNotifier — it decides which events are worth
+ * a push and who may see them).
  *
  * Rate-limited below Telegram's ~30 msg/s bot ceiling so a broadcast to the
  * whole customer base drains steadily instead of tripping 429s. Failures
@@ -25,12 +26,17 @@ export class NotificationProcessor extends WorkerHost {
     private readonly prisma: PrismaService,
     private readonly bot: TelegramBotService,
     private readonly deliveryMessages: DeliveryMessageRenderer,
+    private readonly staffNotifier: StaffNotifier,
   ) {
     super();
   }
 
   async process(job: Job<NotificationJob>): Promise<void> {
     const data = job.data;
+    if (data.audience === 'STAFF') {
+      await this.staffNotifier.deliver(data);
+      return;
+    }
     if (data.audience !== 'CUSTOMER' || !data.customerId || data.silent) return;
 
     const customer = await this.prisma.customer.findUnique({

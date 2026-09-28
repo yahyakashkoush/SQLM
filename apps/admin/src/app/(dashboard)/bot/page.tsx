@@ -8,6 +8,7 @@ import { api, ApiError } from '@/lib/api';
 import { PageHeader } from '@/components/layout/page-header';
 import { Field, Textarea } from '@/components/form';
 import { useAuthStore } from '@/store/auth-store';
+import { TelegramLinkCard } from '@/components/telegram-link-card';
 
 export default function BotPage() {
   const queryClient = useQueryClient();
@@ -65,6 +66,8 @@ export default function BotPage() {
       {error && <p className="mb-4 text-sm text-destructive">{error}</p>}
 
       <div className="grid gap-6 lg:grid-cols-2">
+        <TelegramLinkCard />
+
         <Card>
           <CardContent className="space-y-3 p-4 text-sm">
             <div className="flex items-center justify-between">

@@ -33,6 +33,9 @@ x-api-env: &api-env
   API_BASE_URL: https://${API_DOMAIN:?API_DOMAIN is required}
   CORS_ORIGINS: ${CORS_ORIGINS:?CORS_ORIGINS is required in production}
   MINIAPP_URL: ${MINIAPP_URL:?MINIAPP_URL is required}
+  # Same domain Caddy already serves the dashboard on; used for "open in
+  # dashboard" buttons in staff Telegram alerts.
+  ADMIN_URL: https://${ADMIN_DOMAIN:?ADMIN_DOMAIN is required}
   # Read-only exchange keys for crypto auto-settlement. Blank by default:
   # an unset pair switches that exchange off rather than failing the boot.
   BINANCE_API_KEY: ${BINANCE_API_KEY:-}

@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bullmq';
 import type { Queue } from 'bullmq';
+import type { Prisma } from '@prisma/client';
 import { QUEUE_NAMES } from '../queue/queue-names';
 import { PrismaService } from '../prisma/prisma.service';
 import { RealtimeService } from './realtime.service';
@@ -21,6 +22,8 @@ export type NotificationKind =
   | 'support.customer_reply'
   | 'support.staff_reply'
   | 'support.ticket_closed'
+  /** A customer's first paid order made them verified. */
+  | 'customer.verified'
   | 'broadcast'
   | 'product.new';
 
@@ -75,9 +78,13 @@ export class NotificationDispatcher {
     await this.enqueue({ ...payload, audience: 'CUSTOMER', customerId });
   }
 
-  async broadcastToAllCustomers(payload: NotificationPayload): Promise<number> {
+  /** `where` picks the audience — see `segmentWhere`. Defaults to every active customer. */
+  async broadcastToCustomers(
+    payload: NotificationPayload,
+    where: Prisma.CustomerWhereInput = { status: 'ACTIVE' },
+  ): Promise<number> {
     const customers = await this.prisma.customer.findMany({
-      where: { status: 'ACTIVE' },
+      where,
       select: { id: true },
     });
     const jobs = customers.map((c) => ({

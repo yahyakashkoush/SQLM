@@ -1,8 +1,8 @@
 import { Body, Controller, Post, UseGuards } from '@nestjs/common';
 import { Type } from 'class-transformer';
 import { ArrayMaxSize, ArrayMinSize, IsArray, IsString, MaxLength, ValidateNested } from 'class-validator';
-import { CouponsService } from '../coupons/coupons.service';
 import { CartPricingService } from './cart-pricing.service';
+import { CouponNotUsableError } from '../coupons/errors/coupon.errors';
 import { CheckoutItemDto } from './dto/checkout.dto';
 import { JwtCustomerAuthGuard } from '../rbac/guards/jwt-customer-auth.guard';
 import {
@@ -32,10 +32,7 @@ export class QuoteCouponDto {
 @Controller('coupons')
 @UseGuards(JwtCustomerAuthGuard)
 export class CouponQuoteController {
-  constructor(
-    private readonly coupons: CouponsService,
-    private readonly pricing: CartPricingService,
-  ) {}
+  constructor(private readonly pricing: CartPricingService) {}
 
   /**
    * Shows what a code is worth before the customer commits to it.
@@ -47,13 +44,16 @@ export class CouponQuoteController {
    */
   @Post('quote')
   async quote(@CurrentCustomer() customer: AuthenticatedCustomer, @Body() dto: QuoteCouponDto) {
-    const subtotal = await this.pricing.subtotalFor(dto.items);
-    const quote = await this.coupons.quote(dto.code, customer.id, subtotal);
+    // The full pricing, so `total` includes any member discount and is
+    // the number checkout will charge. Kept for clients that predate
+    // POST /orders/quote.
+    const quote = await this.pricing.quote(customer.id, dto.items, dto.code);
+    if (!quote.coupon) throw new CouponNotUsableError('اكتب كود الخصم.');
     return {
-      code: quote.code,
-      subtotal: subtotal.toString(),
-      discount: quote.discount.toString(),
-      total: subtotal.sub(quote.discount).toString(),
+      code: quote.coupon.code,
+      subtotal: quote.subtotal.toString(),
+      discount: quote.coupon.discount.toString(),
+      total: quote.total.toString(),
     };
   }
 }

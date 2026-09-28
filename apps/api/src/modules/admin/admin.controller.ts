@@ -6,6 +6,7 @@ import {
   BroadcastNotificationDto,
   CreateStaffDto,
   CustomerQueryDto,
+  SetCustomerVerifiedDto,
   UpdateSettingDto,
   UpdateStaffDto,
 } from './dto/admin.dto';
@@ -14,6 +15,7 @@ import { PermissionsGuard } from '../rbac/guards/permissions.guard';
 import { Permissions } from '../rbac/decorators/permissions.decorator';
 import { CurrentStaff, type AuthenticatedStaff } from '../rbac/decorators/current-staff.decorator';
 import { NotificationDispatcher } from '../notifications/notification-dispatcher.service';
+import { segmentWhere } from '../customers/customer-segments';
 
 @Controller('admin')
 @UseGuards(JwtStaffAuthGuard, PermissionsGuard)
@@ -42,6 +44,15 @@ export class AdminController {
   @Permissions('customers.read')
   listCustomers(@Query() query: CustomerQueryDto) {
     return this.admin.listCustomers(query);
+  }
+
+  /** How many customers each audience reaches, for the broadcast picker
+   *  and the customers-list filter. Declared before `customers/:id`,
+   *  which would otherwise capture "segments" as an id. */
+  @Get('customers/segments')
+  @Permissions('customers.read')
+  segments() {
+    return this.admin.segmentCounts();
   }
 
   @Get('customers/:id')
@@ -94,16 +105,31 @@ export class AdminController {
     return this.admin.updateSetting(key, dto, staff.id);
   }
 
+  /** Staff override of the automatic verified status. */
+  @Patch('customers/:id/verification')
+  @Permissions('customers.write')
+  setVerified(
+    @Param('id') id: string,
+    @Body() dto: SetCustomerVerifiedDto,
+    @CurrentStaff() staff: AuthenticatedStaff,
+  ) {
+    return this.admin.setCustomerVerified(id, dto.verified, staff.id);
+  }
+
   @Post('notifications/broadcast')
   @Permissions('settings.write')
   async broadcast(@Body() dto: BroadcastNotificationDto) {
     const miniAppUrl = this.config.get<string>('MINIAPP_URL', 'http://localhost:3200');
-    const sent = await this.notifications.broadcastToAllCustomers({
-      kind: 'broadcast',
-      summary: dto.message,
-      imageUrl: dto.imageUrl,
-      button: dto.withStoreButton ? { text: '🛍️ افتح المتجر', url: miniAppUrl } : undefined,
-    });
-    return { sent };
+    const segment = dto.segment ?? 'ALL';
+    const sent = await this.notifications.broadcastToCustomers(
+      {
+        kind: 'broadcast',
+        summary: dto.message,
+        imageUrl: dto.imageUrl,
+        button: dto.withStoreButton ? { text: '🛍️ افتح المتجر', url: miniAppUrl } : undefined,
+      },
+      segmentWhere(segment),
+    );
+    return { sent, segment };
   }
 }

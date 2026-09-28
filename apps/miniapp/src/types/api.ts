@@ -83,10 +83,18 @@ export interface Order {
   status: OrderStatus;
   currency: string;
   subtotal: string;
-  /** What a coupon took off. "0" when none was used. */
+  /** Everything taken off — member discount plus coupon. "0" when none. */
   discountTotal: string;
+  /** The verified discount or the welcome gift; part of discountTotal. */
+  memberDiscount: string;
+  memberDiscountKind: MemberDiscountKind | null;
   total: string;
   couponCode: string | null;
+  /** What to actually transfer when the payment method is in another
+   *  currency (USD prices paid in EGP). Frozen when the order was placed. */
+  payCurrency: string | null;
+  payAmount: string | null;
+  exchangeRate: string | null;
   paymentMethodId: string | null;
   createdAt: string;
   items: OrderItem[];
@@ -108,6 +116,8 @@ export interface CustomerDelivery {
 export interface StoreInfo {
   name: string;
   supportContact: string;
+  /** Display-only estimate rate; orders carry their own frozen rate. */
+  egpPerUsd?: number;
 }
 
 export interface Ticket {
@@ -135,9 +145,24 @@ export interface CustomerProfile {
 
 export type { PaginatedResult };
 
-export interface CouponQuote {
-  code: string;
+
+export type MemberDiscountKind = 'VERIFIED' | 'WELCOME';
+
+/** The server's price for a cart — the same function checkout charges with. */
+export interface OrderQuote {
+  currency: string;
   subtotal: string;
-  discount: string;
+  member: { kind: MemberDiscountKind; percent: number; amount: string } | null;
+  coupon: { code: string; discount: string } | null;
+  discountTotal: string;
   total: string;
+  /** What the transfer comes to with each enabled payment method. */
+  paymentOptions: Array<{ paymentMethodId: string; currency: string; amount: string; rate: string | null }>;
+}
+
+export interface CustomerPerks {
+  tier: 'VERIFIED' | 'REGULAR';
+  verifiedAt: string | null;
+  verifiedDiscountPercent: number;
+  welcomeGift: { percent: number; available: boolean; message: string } | null;
 }

@@ -262,6 +262,8 @@ export class DepositPollerService {
     await this.notifications.notifyStaff({
       kind: 'payment.reviewed',
       orderId: watch.orderId,
+      /** Nobody reviewed this one, so staff are told it happened. */
+      autoSettled: true,
       summary: `Crypto payment auto-confirmed for order ${watch.orderId} (${deposit.amount.toString()} ${deposit.asset})`,
     });
     this.logger.log(

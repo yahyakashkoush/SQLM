@@ -2,17 +2,18 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { CheckCircle2, Circle, Loader2, TicketPercent, X } from 'lucide-react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { CheckCircle2, Circle, Gift, Loader2, Star, TicketPercent, X } from 'lucide-react';
 import { Button, Card, CardContent, Input, Separator } from '@sqlm/ui';
 import { usePaymentMethods } from '@/lib/queries';
 import { cartSubtotal, useCartStore } from '@/store/cart-store';
 import { useAuthStore } from '@/store/auth-store';
 import { api, ApiError } from '@/lib/api';
 import { formatMoney } from '@/lib/format';
-import type { CouponQuote } from '@/types/api';
 
 export default function CheckoutPage() {
   const router = useRouter();
+  const queryClient = useQueryClient();
   const items = useCartStore((s) => s.items);
   const clearCart = useCartStore((s) => s.clear);
   const ensureIdempotencyKey = useCartStore((s) => s.ensureIdempotencyKey);
@@ -24,9 +25,21 @@ export default function CheckoutPage() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [couponInput, setCouponInput] = useState('');
-  const [coupon, setCoupon] = useState<CouponQuote | null>(null);
+  const [appliedCode, setAppliedCode] = useState<string | null>(null);
   const [couponError, setCouponError] = useState<string | null>(null);
   const [checkingCoupon, setCheckingCoupon] = useState(false);
+
+  const lines = items.map((i) => ({ productId: i.productId, quantity: i.quantity }));
+  const quoteKey = ['order-quote', lines, appliedCode] as const;
+
+  // The server prices the cart — member discount, coupon, and the amount to
+  // transfer with each method — with the same function checkout charges
+  // with, so nothing on this page is arithmetic the client made up.
+  const quote = useQuery({
+    queryKey: quoteKey,
+    queryFn: () => api.quoteOrder(lines, appliedCode ?? undefined),
+    enabled: Boolean(accessToken) && items.length > 0,
+  });
 
   if (items.length === 0) {
     return (
@@ -45,11 +58,15 @@ export default function CheckoutPage() {
     );
   }
 
-  const subtotal = cartSubtotal(items);
-  const payable = coupon ? Number(coupon.total) : subtotal;
-  const currency = items[0]!.currency;
+  const priced = quote.data;
+  const currency = priced?.currency ?? items[0]!.currency;
+  const subtotal = priced ? Number(priced.subtotal) : cartSubtotal(items);
+  const total = priced ? Number(priced.total) : subtotal;
   // Every enabled method is offered; the admin decides which ones exist.
   const methods = paymentMethods.data ?? [];
+  const optionFor = (methodId: string) => priced?.paymentOptions.find((o) => o.paymentMethodId === methodId);
+  const selectedOption = selectedMethod ? optionFor(selectedMethod) : undefined;
+  const converted = selectedOption && selectedOption.currency !== currency ? selectedOption : undefined;
 
   const handleApplyCoupon = async () => {
     const code = couponInput.trim();
@@ -57,15 +74,10 @@ export default function CheckoutPage() {
     setCheckingCoupon(true);
     setCouponError(null);
     try {
-      // Quoted against the cart server-side, so the number shown here is
-      // the number checkout will charge.
-      const quote = await api.quoteCoupon(
-        code,
-        items.map((i) => ({ productId: i.productId, quantity: i.quantity })),
-      );
-      setCoupon(quote);
+      const next = await api.quoteOrder(lines, code);
+      queryClient.setQueryData(['order-quote', lines, code], next);
+      setAppliedCode(code);
     } catch (err) {
-      setCoupon(null);
       setCouponError(err instanceof ApiError ? err.message : 'تعذّر التحقق من الكود.');
     } finally {
       setCheckingCoupon(false);
@@ -73,7 +85,7 @@ export default function CheckoutPage() {
   };
 
   const removeCoupon = () => {
-    setCoupon(null);
+    setAppliedCode(null);
     setCouponInput('');
     setCouponError(null);
   };
@@ -83,20 +95,31 @@ export default function CheckoutPage() {
       setError('اختار طريقة الدفع الأول.');
       return;
     }
+    if (!priced) {
+      setError('استنى لحظة لحد ما السعر يتحسب.');
+      return;
+    }
     setSubmitting(true);
     setError(null);
     try {
       const key = ensureIdempotencyKey();
       const order = await api.checkout({
-        items: items.map((i) => ({ productId: i.productId, quantity: i.quantity })),
+        items: lines,
         paymentMethodId: selectedMethod,
         idempotencyKey: key,
-        couponCode: coupon?.code,
+        couponCode: appliedCode ?? undefined,
+        expectedTotal: Number(priced.total),
       });
       clearCart();
       clearIdempotencyKey();
+      // The order may now be holding the welcome gift.
+      void queryClient.invalidateQueries({ queryKey: ['perks'] });
       router.push(`/orders/${order.id}`);
     } catch (err) {
+      if (err instanceof ApiError && err.code === 'PRICE_CHANGED') {
+        // Show the new price rather than charging it: the customer confirms again.
+        await quote.refetch();
+      }
       setError(err instanceof ApiError ? err.message : 'فشل إنشاء الطلب، حاول مرة أخرى.');
       setSubmitting(false);
     }
@@ -117,22 +140,40 @@ export default function CheckoutPage() {
             </div>
           ))}
           <Separator className="my-1" />
-          {coupon && (
-            <>
-              <div className="flex items-center justify-between text-sm text-muted-foreground">
-                <span>المجموع</span>
-                <span>{formatMoney(subtotal, currency)}</span>
-              </div>
-              <div className="flex items-center justify-between text-sm text-success">
-                <span>خصم ({coupon.code})</span>
-                <span>−{formatMoney(coupon.discount, currency)}</span>
-              </div>
-            </>
+          {priced && Number(priced.discountTotal) > 0 && (
+            <div className="flex items-center justify-between text-sm text-muted-foreground">
+              <span>المجموع</span>
+              <span>{formatMoney(subtotal, currency)}</span>
+            </div>
+          )}
+          {priced?.member && (
+            <div className="flex items-center justify-between text-sm text-success">
+              <span className="flex items-center gap-1">
+                {priced.member.kind === 'VERIFIED' ? <Star className="h-3.5 w-3.5" /> : <Gift className="h-3.5 w-3.5" />}
+                {priced.member.kind === 'VERIFIED' ? 'خصم العميل المميز' : 'هدية أول طلب'} ({priced.member.percent}%)
+              </span>
+              <span>−{formatMoney(priced.member.amount, currency)}</span>
+            </div>
+          )}
+          {priced?.coupon && (
+            <div className="flex items-center justify-between text-sm text-success">
+              <span>خصم ({priced.coupon.code})</span>
+              <span>−{formatMoney(priced.coupon.discount, currency)}</span>
+            </div>
           )}
           <div className="flex items-center justify-between text-sm font-semibold">
             <span>الإجمالي</span>
-            <span>{formatMoney(payable, currency)}</span>
+            <span className="flex items-center gap-1">
+              {quote.isFetching && <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />}
+              {formatMoney(total, currency)}
+            </span>
           </div>
+          {converted && (
+            <div className="flex items-center justify-between rounded-md bg-primary/5 px-2 py-1.5 text-sm">
+              <span>المطلوب تحويله</span>
+              <span className="font-semibold">{formatMoney(converted.amount, converted.currency)}</span>
+            </div>
+          )}
         </CardContent>
       </Card>
 
@@ -141,11 +182,11 @@ export default function CheckoutPage() {
           <p className="flex items-center gap-2 text-sm font-semibold">
             <TicketPercent className="h-4 w-4" /> كود خصم
           </p>
-          {coupon ? (
+          {priced?.coupon ? (
             <div className="flex items-center justify-between rounded-lg border border-success/40 bg-success/5 p-3 text-sm">
               <span>
-                <span className="font-mono font-semibold">{coupon.code}</span> —{' '}
-                <span className="text-success">وفّرت {formatMoney(coupon.discount, currency)}</span>
+                <span className="font-mono font-semibold">{priced.coupon.code}</span> —{' '}
+                <span className="text-success">وفّرت {formatMoney(priced.coupon.discount, currency)}</span>
               </span>
               <button type="button" onClick={removeCoupon} aria-label="إزالة الكود">
                 <X className="h-4 w-4 text-muted-foreground" />
@@ -185,6 +226,8 @@ export default function CheckoutPage() {
         ) : (
           methods.map((method) => {
             const selected = selectedMethod === method.id;
+            const option = optionFor(method.id);
+            const inOtherCurrency = option && option.currency !== currency;
             return (
               <button
                 key={method.id}
@@ -199,10 +242,13 @@ export default function CheckoutPage() {
                 ) : (
                   <Circle className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
                 )}
-                <span>
+                <span className="flex-1">
                   <span className="block font-medium">{method.name}</span>
                   {method.description && <span className="block text-xs text-muted-foreground">{method.description}</span>}
                 </span>
+                {inOtherCurrency && (
+                  <span className="shrink-0 text-xs font-semibold">{formatMoney(option.amount, option.currency)}</span>
+                )}
               </button>
             );
           })
@@ -213,9 +259,10 @@ export default function CheckoutPage() {
       {error && <p className="text-sm text-destructive">{error}</p>}
 
       <div className="fixed inset-x-0 bottom-16 z-40 border-t bg-background p-4">
-        <Button className="w-full" size="lg" disabled={submitting} onClick={() => void handlePlaceOrder()}>
+        <Button className="w-full" size="lg" disabled={submitting || !priced} onClick={() => void handlePlaceOrder()}>
           {submitting && <Loader2 className="h-4 w-4 animate-spin" />}
-          تأكيد الطلب — {formatMoney(payable, currency)}
+          تأكيد الطلب —{' '}
+          {converted ? formatMoney(converted.amount, converted.currency) : formatMoney(total, currency)}
         </Button>
       </div>
     </main>

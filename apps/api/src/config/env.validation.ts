@@ -49,6 +49,8 @@ export const envSchema = z.object({
   /** Public origin of this API, used to build links to stored files. */
   API_BASE_URL: optionalString(),
   MINIAPP_URL: optionalString(),
+  /** Public origin of the admin dashboard, for "open order" buttons in staff alerts. */
+  ADMIN_URL: optionalString(),
 
   /**
    * Exchange credentials for automatic crypto settlement. Read-only keys

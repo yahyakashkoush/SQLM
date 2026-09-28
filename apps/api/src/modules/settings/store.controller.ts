@@ -11,6 +11,9 @@ export class StoreController {
     return {
       name: await this.settings.getString('store.name'),
       supportContact: await this.settings.getString('store.supportContact'),
+      /** For showing an EGP estimate next to USD prices; orders carry
+       *  their own frozen rate, so this is display-only. */
+      egpPerUsd: await this.settings.getNumber('pricing.egpPerUsd'),
     };
   }
 }

@@ -115,6 +115,7 @@ export class DeliveryService {
       await this.notifications.notifyStaff({
         kind: 'delivery.failed',
         orderId,
+        manualCount: manual,
         summary: `Order #${order.sequenceNumber} has ${manual} item(s) awaiting manual delivery`,
       });
     }

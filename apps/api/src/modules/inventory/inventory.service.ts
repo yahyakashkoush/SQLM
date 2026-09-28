@@ -182,6 +182,8 @@ export class InventoryService {
     await this.notifications.notifyStaff({
       kind: 'inventory.low_stock',
       productId,
+      productName: product?.name ?? productId,
+      remaining,
       summary: `Low stock: ${product?.name ?? productId} has ${remaining} item(s) left`,
     });
   }

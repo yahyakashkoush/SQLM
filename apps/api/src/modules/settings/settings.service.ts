@@ -39,6 +39,18 @@ export class SettingsService {
     return value === undefined || value === null ? String(SETTING_DEFAULTS[key] ?? '') : String(value);
   }
 
+  /**
+   * A number setting, falling back to its default when the stored value is
+   * missing or not a finite number — a price calculation must never see NaN.
+   */
+  async getNumber(key: string, db?: Db): Promise<number> {
+    const value = (await this.all(db))[key];
+    const parsed = typeof value === 'number' ? value : typeof value === 'string' ? Number(value) : NaN;
+    if (Number.isFinite(parsed)) return parsed;
+    const fallback = Number(SETTING_DEFAULTS[key]);
+    return Number.isFinite(fallback) ? fallback : 0;
+  }
+
   async getBoolean(key: string): Promise<boolean> {
     const value = (await this.all())[key];
     if (typeof value === 'boolean') return value;

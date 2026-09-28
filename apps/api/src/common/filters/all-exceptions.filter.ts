@@ -62,6 +62,11 @@ export class AllExceptionsFilter implements ExceptionFilter {
       path: request.url,
       timestamp: new Date().toISOString(),
       message,
+      // A machine-readable reason for the few errors a client reacts to
+      // differently from just showing the message (e.g. re-quoting a cart).
+      ...(isDomain && 'code' in exception && typeof exception.code === 'string'
+        ? { code: exception.code }
+        : {}),
       ...(isHttp && typeof payload === 'object' && payload && 'errors' in payload
         ? { errors: (payload as Record<string, unknown>).errors }
         : {}),

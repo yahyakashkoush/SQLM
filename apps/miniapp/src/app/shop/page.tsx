@@ -8,6 +8,7 @@ import { useTelegram } from '@/components/providers/telegram-provider';
 import { useAuthStore } from '@/store/auth-store';
 import { ProductCard } from '@/components/products/product-card';
 import { CartButton } from '@/components/cart/cart-button';
+import { PerksBanner } from '@/components/account/perks-banner';
 
 export default function ShopPage() {
   const { authError, inTelegram } = useTelegram();
@@ -31,6 +32,8 @@ export default function ShopPage() {
           <CartButton />
         </div>
       </header>
+
+      <PerksBanner compact />
 
       {!inTelegram && (
         <p className="rounded-md border border-warning/50 bg-warning/10 p-3 text-xs">

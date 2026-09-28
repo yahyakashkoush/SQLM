@@ -195,15 +195,22 @@ enum TelegramUpdateStatus {
 // =============================================================================
 
 model Staff {
-  id           String      @id @default(uuid())
-  email        String      @unique
-  passwordHash String
-  name         String
-  role         StaffRole
-  status       StaffStatus @default(ACTIVE)
-  lastLoginAt  DateTime?
-  createdAt    DateTime    @default(now())
-  updatedAt    DateTime    @updatedAt
+  id             String      @id @default(uuid())
+  email          String      @unique
+  passwordHash   String
+  name           String
+  role           StaffRole
+  status         StaffStatus @default(ACTIVE)
+  lastLoginAt    DateTime?
+  /// Set by tapping the one-time link from the dashboard, which proves the
+  /// Telegram account belongs to this staff member. Payment approvals made
+  /// from Telegram are recorded against this staff row and checked against
+  /// its role, exactly like approvals from the dashboard.
+  telegramId     BigInt?     @unique
+  /// Order, payment and support alerts pushed to the linked chat.
+  telegramNotify Boolean     @default(true)
+  createdAt      DateTime    @default(now())
+  updatedAt      DateTime    @updatedAt
 
   refreshTokens       StaffRefreshToken[]
   reviewedProofs      PaymentProof[]      @relation("ProofReviewedBy")
@@ -236,16 +243,25 @@ model StaffRefreshToken {
 // =============================================================================
 
 model Customer {
-  id               String         @id @default(uuid())
-  telegramId       BigInt         @unique
-  telegramUsername String?
-  firstName        String?
-  lastName         String?
-  languageCode     String?
-  status           CustomerStatus @default(ACTIVE)
-  lastSeenAt       DateTime?
-  createdAt        DateTime       @default(now())
-  updatedAt        DateTime       @updatedAt
+  id                 String         @id @default(uuid())
+  telegramId         BigInt         @unique
+  telegramUsername   String?
+  firstName          String?
+  lastName           String?
+  languageCode       String?
+  status             CustomerStatus @default(ACTIVE)
+  lastSeenAt         DateTime?
+  /// A verified ("مميز وموثّق") customer has completed a paid order. Set by
+  /// the order state machine on the first transition to PAID, never by the
+  /// client; staff can also grant or revoke it. Verified customers get the
+  /// member discount on every order.
+  verifiedAt         DateTime?
+  /// The order that is using this customer's one-time welcome gift. Claimed
+  /// with a conditional UPDATE inside checkout, so two simultaneous orders
+  /// cannot both take it, and released if that order is cancelled.
+  welcomeGiftOrderId String?
+  createdAt          DateTime       @default(now())
+  updatedAt          DateTime       @updatedAt
 
   orders            Order[]
   paymentProofs     PaymentProof[]
@@ -254,6 +270,7 @@ model Customer {
   orderEvents       OrderEvent[]       @relation("OrderEventActorCustomer")
   couponRedemptions CouponRedemption[]
 
+  @@index([verifiedAt])
   @@map("customers")
 }
 
@@ -365,32 +382,45 @@ model InventoryItem {
 // =============================================================================
 
 model Order {
-  id              String         @id @default(uuid())
-  sequenceNumber  Int            @unique @default(autoincrement())
-  customerId      String
-  customer        Customer       @relation(fields: [customerId], references: [id], onDelete: Restrict)
-  status          OrderStatus    @default(CREATED)
-  currency        String         @default("USD")
-  subtotal        Decimal        @db.Decimal(12, 2)
-  /// What the coupon took off. Zero when none was used, so `total` is
-  /// always `subtotal - discountTotal` and nothing has to special-case it.
-  discountTotal   Decimal        @default(0) @db.Decimal(12, 2)
-  total           Decimal        @db.Decimal(12, 2)
-  couponId        String?
-  coupon          Coupon?        @relation(fields: [couponId], references: [id], onDelete: SetNull)
+  id                 String              @id @default(uuid())
+  sequenceNumber     Int                 @unique @default(autoincrement())
+  customerId         String
+  customer           Customer            @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  status             OrderStatus         @default(CREATED)
+  currency           String              @default("USD")
+  subtotal           Decimal             @db.Decimal(12, 2)
+  /// Everything taken off: the member discount plus the coupon. Zero when
+  /// neither applied, so `total` is always `subtotal - discountTotal` and
+  /// nothing has to special-case it. The coupon's share is
+  /// `discountTotal - memberDiscount`.
+  discountTotal      Decimal             @default(0) @db.Decimal(12, 2)
+  /// The verified-customer discount or the welcome gift, applied before
+  /// the coupon. Which one is in `memberDiscountKind`.
+  memberDiscount     Decimal             @default(0) @db.Decimal(12, 2)
+  memberDiscountKind MemberDiscountKind?
+  total              Decimal             @db.Decimal(12, 2)
+  /// What the customer actually transfers when the payment method is in a
+  /// different currency from the prices (USD prices paid in EGP). Frozen
+  /// at checkout with the rate used, so changing the rate later never
+  /// changes what an existing order asks for. Null when no conversion.
+  payCurrency        String?
+  payAmount          Decimal?            @db.Decimal(14, 2)
+  exchangeRate       Decimal?            @db.Decimal(14, 6)
+  couponId           String?
+  coupon             Coupon?             @relation(fields: [couponId], references: [id], onDelete: SetNull)
   /// The code as typed, kept even if the coupon is later deleted — an
   /// order's history must still explain its own price.
-  couponCode      String?
-  paymentMethodId String?
-  paymentMethod   PaymentMethod? @relation(fields: [paymentMethodId], references: [id], onDelete: SetNull)
-  idempotencyKey  String
-  cancelReason    String?
-  paidAt          DateTime?
-  deliveredAt     DateTime?
-  completedAt     DateTime?
-  cancelledAt     DateTime?
-  createdAt       DateTime       @default(now())
-  updatedAt       DateTime       @updatedAt
+  couponCode         String?
+  paymentMethodId    String?
+  paymentMethod      PaymentMethod?      @relation(fields: [paymentMethodId], references: [id], onDelete: SetNull)
+  idempotencyKey     String
+  cancelReason       String?
+  paidAt             DateTime?
+  deliveredAt        DateTime?
+  completedAt        DateTime?
+  cancelledAt        DateTime?
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime            @updatedAt
 
   items            OrderItem[]
   events           OrderEvent[]
@@ -721,6 +751,13 @@ model TelegramUpdateLog {
   @@map("telegram_update_log")
 }
 
+enum MemberDiscountKind {
+  /// Standing discount for a customer who has completed a paid order.
+  VERIFIED
+  /// One-time first-order gift for a customer who has not bought yet.
+  WELCOME
+}
+
 enum CouponType {
   /// `value` is a percentage of the subtotal, 1–100.
   PERCENT
@@ -772,21 +809,23 @@ model Coupon {
 /// One coupon use. The unique on orderId is what makes redemption
 /// exactly-once: a retried checkout cannot spend the same code twice.
 model CouponRedemption {
-  id         String   @id @default(uuid())
-  couponId   String
-  coupon     Coupon   @relation(fields: [couponId], references: [id], onDelete: Cascade)
-  customerId String
-  customer   Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
-  orderId    String   @unique
-  order      Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  id          String   @id @default(uuid())
+  couponId    String
+  coupon      Coupon   @relation(fields: [couponId], references: [id], onDelete: Cascade)
+  customerId  String
+  customer    Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  orderId     String   @unique
+  order       Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
   /// What this particular redemption was worth, for reporting.
-  amount     Decimal  @db.Decimal(12, 2)
-  /// This customer's 1-based use of this coupon. Counting rows and then
-  /// inserting would let two concurrent checkouts both see "used 0 times";
-  /// making the ordinal part of a unique index means the loser of that
-  /// race hits a constraint instead of a second free discount.
+  amount      Decimal  @db.Decimal(12, 2)
+  /// This customer's ordinal use of this coupon (highest so far + 1).
+  /// Counting rows and then inserting would let two concurrent checkouts
+  /// both see "used 0 times"; making the ordinal part of a unique index
+  /// means the loser of that race hits a constraint instead of a second
+  /// free discount. Not count + 1: a cancelled order hands its use back by
+  /// deleting its row, which can leave a gap below the highest ordinal.
   customerSeq Int
-  createdAt  DateTime @default(now())
+  createdAt   DateTime @default(now())
 
   @@unique([couponId, customerId, customerSeq])
   @@index([couponId, customerId])

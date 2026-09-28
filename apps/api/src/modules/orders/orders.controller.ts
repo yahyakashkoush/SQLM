@@ -1,6 +1,6 @@
-import { Body, Controller, Get, Param, Post, Query, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, HttpCode, Param, Post, Query, UseGuards } from '@nestjs/common';
 import { OrdersService } from './orders.service';
-import { CheckoutDto } from './dto/checkout.dto';
+import { CheckoutDto, QuoteOrderDto } from './dto/checkout.dto';
 import { CancelOrderDto } from './dto/cancel-order.dto';
 import { OrderQueryDto } from './dto/order-query.dto';
 import { JwtCustomerAuthGuard } from '../rbac/guards/jwt-customer-auth.guard';
@@ -17,6 +17,14 @@ export class OrdersController {
   @Post('checkout')
   checkout(@CurrentCustomer() customer: AuthenticatedCustomer, @Body() dto: CheckoutDto) {
     return this.orders.checkout(customer.id, dto);
+  }
+
+  /** Prices a cart for this customer — member discount, coupon, and the
+   *  amount to transfer with each payment method — without placing it. */
+  @Post('quote')
+  @HttpCode(200)
+  quote(@CurrentCustomer() customer: AuthenticatedCustomer, @Body() dto: QuoteOrderDto) {
+    return this.orders.quoteForCustomer(customer.id, dto);
   }
 
   @Get()

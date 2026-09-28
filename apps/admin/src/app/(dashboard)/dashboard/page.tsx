@@ -8,6 +8,7 @@ import { api, type DashboardStats } from '@/lib/api';
 import { PageHeader } from '@/components/layout/page-header';
 import { useRealtime } from '@/hooks/use-realtime';
 import { RevenuePanel } from '@/components/dashboard/revenue-panel';
+import { TelegramLinkCard } from '@/components/telegram-link-card';
 
 export default function DashboardPage() {
   const events = useRealtime();
@@ -54,7 +55,8 @@ export default function DashboardPage() {
     <>
       <PageHeader title="Dashboard" description="What needs attention right now." />
 
-      <div className="mb-6">
+      <div className="mb-6 space-y-4">
+        <TelegramLinkCard compact />
         <RevenuePanel />
       </div>
 

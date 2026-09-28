@@ -1,3 +1,4 @@
+import type { CustomerSegment, SettingGroup } from '@sqlm/shared';
 import { useAuthStore } from '@/store/auth-store';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000';
@@ -107,6 +108,11 @@ export const api = {
   deleteDeliveryTemplate: (id: string) => del(`/admin/delivery-templates/${id}`),
 
   botStatus: () => get<BotStatus>('/admin/bot'),
+  myTelegram: () => get<StaffTelegramLink>('/admin/bot/me'),
+  createTelegramLink: () => post<{ url: string; expiresAt: string }>('/admin/bot/me/link'),
+  setTelegramNotify: (notify: boolean) => patch<StaffTelegramLink>('/admin/bot/me', { notify }),
+  unlinkTelegram: () => del<StaffTelegramLink>('/admin/bot/me/link'),
+  testTelegram: () => post<{ sent: boolean }>('/admin/bot/me/test'),
   botReconnect: () => post<BotStatus>('/admin/bot/reconnect'),
   botUpdateProfile: (body: { name?: string; description?: string; shortDescription?: string }) =>
     patch<BotStatus>('/admin/bot/profile', body),
@@ -176,6 +182,9 @@ export const api = {
 
   customers: (qs = '') => get<Paginated<AdminCustomer>>(`/admin/customers${qs}`),
   customer: (id: string) => get<AdminCustomerDetail>(`/admin/customers/${id}`),
+  customerSegments: () => get<Array<{ segment: CustomerSegment; count: number }>>('/admin/customers/segments'),
+  setCustomerVerified: (id: string, verified: boolean) =>
+    patch<{ id: string; verifiedAt: string | null }>(`/admin/customers/${id}/verification`, { verified }),
 
   staff: () => get<StaffRow[]>('/admin/staff'),
   createStaff: (body: unknown) => post<StaffRow>('/admin/staff', body),
@@ -186,7 +195,12 @@ export const api = {
   settings: () => get<SettingsResponse>('/admin/settings'),
   updateSetting: (key: string, value: unknown) => patch(`/admin/settings/${key}`, { value }),
 
-  broadcast: (body: { message: string; imageUrl?: string; withStoreButton?: boolean }) =>
+  broadcast: (body: {
+    message: string;
+    imageUrl?: string;
+    withStoreButton?: boolean;
+    segment?: CustomerSegment;
+  }) =>
     post<{ sent: number }>('/admin/notifications/broadcast', body),
 
   roles: () => get<Array<{ role: string; permissions: string[] }>>('/rbac/roles'),
@@ -297,6 +311,15 @@ export interface AdminOrder {
 
 export interface AdminOrderDetail extends Omit<AdminOrder, 'customer' | 'paymentMethod' | 'items'> {
   subtotal: string;
+  /** Member discount + coupon; `total = subtotal - discountTotal`. */
+  discountTotal: string;
+  memberDiscount: string;
+  memberDiscountKind: 'VERIFIED' | 'WELCOME' | null;
+  couponCode: string | null;
+  /** What the customer transfers when the method's currency differs. */
+  payCurrency: string | null;
+  payAmount: string | null;
+  exchangeRate: string | null;
   cancelReason: string | null;
   paidAt: string | null;
   deliveredAt: string | null;
@@ -315,6 +338,7 @@ export interface AdminOrderDetail extends Omit<AdminOrder, 'customer' | 'payment
     lastName: string | null;
     telegramUsername: string | null;
     status: string;
+    verifiedAt: string | null;
   };
   paymentMethod: PaymentMethod | null;
   paymentProofs: Array<{
@@ -480,11 +504,16 @@ export interface AdminCustomer {
   lastName: string | null;
   telegramUsername: string | null;
   status: string;
+  /** Set once a customer's first order is paid — the "verified" tier. */
+  verifiedAt: string | null;
   createdAt: string;
   _count: { orders: number; supportTickets: number };
+  paidOrders: number;
+  totalSpent: string;
 }
 
 export interface AdminCustomerDetail extends Omit<AdminCustomer, '_count'> {
+  welcomeGiftOrderId: string | null;
   orders: Array<{
     id: string;
     sequenceNumber: number;
@@ -517,12 +546,14 @@ export interface AuditLogRow {
 
 export interface SettingDefinitionRow {
   key: string;
-  group: 'store' | 'bot' | 'delivery' | 'orders';
+  group: SettingGroup;
   label: string;
   help?: string;
   type: 'text' | 'textarea' | 'boolean' | 'number';
   default: string | number | boolean;
   placeholders?: string[];
+  min?: number;
+  max?: number;
   value: unknown;
   updatedAt: string | null;
 }
@@ -585,4 +616,9 @@ export interface RevenueReport {
   changePercent: number | null;
   byDay: Array<{ day: string; revenue: string; orders: number }>;
   topProducts: Array<{ productId: string; name: string; units: number; revenue: string }>;
+}
+
+export interface StaffTelegramLink {
+  linked: boolean;
+  notify: boolean;
 }

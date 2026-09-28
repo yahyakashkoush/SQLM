@@ -4,6 +4,7 @@ import {
   ArrayMinSize,
   IsArray,
   IsInt,
+  IsNumber,
   IsOptional,
   IsString,
   IsUUID,
@@ -43,6 +44,30 @@ export class CheckoutDto {
 
   /** Re-validated and re-priced server-side; the quote the customer saw is
    *  never trusted, only the code they typed. */
+  @IsOptional()
+  @IsString()
+  @MaxLength(32)
+  couponCode?: string;
+
+  /** The total the customer was shown. When sent, checkout refuses to
+   *  charge anything else (409 PRICE_CHANGED) instead of silently
+   *  charging a different amount. */
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @Min(0)
+  expectedTotal?: number;
+}
+
+/** A cart to price without placing it. */
+export class QuoteOrderDto {
+  @IsArray()
+  @ArrayMinSize(1)
+  @ArrayMaxSize(20)
+  @ValidateNested({ each: true })
+  @Type(() => CheckoutItemDto)
+  items!: CheckoutItemDto[];
+
   @IsOptional()
   @IsString()
   @MaxLength(32)

@@ -67,7 +67,9 @@ export class CryptoWatchService {
 
     const asset = method.cryptoAsset.toUpperCase();
     const network = method.cryptoNetwork.toUpperCase();
-    const base = new Prisma.Decimal(order.total.toString()).toDecimalPlaces(
+    // `payAmount` when the order was converted into the method's currency
+    // (an EGP-priced order paid in USDT); otherwise the total as priced.
+    const base = new Prisma.Decimal((order.payAmount ?? order.total).toString()).toDecimalPlaces(
       2,
       Prisma.Decimal.ROUND_UP,
     );

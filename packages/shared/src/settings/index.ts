@@ -6,7 +6,7 @@
  * Message templates accept `{placeholder}` tokens; see `renderTemplate`.
  */
 export type SettingType = 'text' | 'textarea' | 'boolean' | 'number';
-export type SettingGroup = 'store' | 'bot' | 'delivery' | 'orders';
+export type SettingGroup = 'store' | 'pricing' | 'customers' | 'bot' | 'delivery' | 'orders';
 
 export interface SettingDefinition {
   key: string;
@@ -16,6 +16,9 @@ export interface SettingDefinition {
   type: SettingType;
   default: string | number | boolean;
   placeholders?: readonly string[];
+  /** Bounds for `number` settings, enforced by the API on save. */
+  min?: number;
+  max?: number;
 }
 
 const DELIVERY_PLACEHOLDERS = [
@@ -48,6 +51,56 @@ export const SETTING_DEFINITIONS: readonly SettingDefinition[] = [
     help: 'Pre-selected when creating new products (3-letter code, e.g. EGP or USD).',
     type: 'text',
     default: 'USD',
+  },
+  {
+    key: 'pricing.egpPerUsd',
+    group: 'pricing',
+    label: 'EGP per 1 USD',
+    help:
+      'Prices are set in USD. When a customer pays with an EGP method (Vodafone Cash, InstaPay, bank) they are told the EGP amount at this rate, rounded up to a whole pound. Each order keeps the rate it was placed at.',
+    type: 'number',
+    default: 50,
+    min: 1,
+    max: 100000,
+  },
+  {
+    key: 'customers.verifiedDiscountPercent',
+    group: 'customers',
+    label: 'Verified customer discount (%)',
+    help:
+      'A customer becomes verified (مميز وموثّق) automatically after their first paid order, and gets this discount on every order after that. 0 = no discount (the default — this is your margin, so it starts off until you choose a number).',
+    type: 'number',
+    default: 0,
+    min: 0,
+    max: 90,
+  },
+  {
+    key: 'customers.welcomeGiftPercent',
+    group: 'customers',
+    label: 'Welcome gift — first order discount (%)',
+    help:
+      'The gift for regular customers who have not bought yet: applied automatically to their first order, no code needed. 0 = no gift (the default until you choose a number).',
+    type: 'number',
+    default: 0,
+    min: 0,
+    max: 90,
+  },
+  {
+    key: 'customers.welcomeGiftMessage',
+    group: 'customers',
+    label: 'Welcome gift text (shown in the Mini App)',
+    type: 'textarea',
+    default: '🎁 هدية ليك: خصم {percent}% على أول طلب — بيتطبّق تلقائي من غير كود.',
+    placeholders: ['percent', 'store_name'],
+  },
+  {
+    key: 'customers.verifiedMessage',
+    group: 'customers',
+    label: 'Telegram message when a customer becomes verified',
+    type: 'textarea',
+    default:
+      '⭐ مبروك! بقيت عميل مميز وموثّق في {store_name}.\nمن دلوقتي ليك خصم {percent}% على كل طلباتك، بيتطبّق تلقائي.',
+    placeholders: ['percent', 'store_name', 'customer_name'],
   },
   {
     key: 'bot.welcomeMessage',
@@ -125,3 +178,33 @@ export function renderTemplate(template: string, values: Record<string, string |
     .replace(/\n{3,}/g, '\n\n')
     .trim();
 }
+
+/**
+ * Customer audiences for broadcasts and the customers list. Defined once
+ * here so the dashboard's picker and the API's filter can never disagree
+ * about what a segment means; the API owns the actual query.
+ */
+export const CUSTOMER_SEGMENTS = [
+  'ALL',
+  'VERIFIED',
+  'REGULAR',
+  'BUYERS',
+  'NON_BUYERS',
+  'DORMANT',
+] as const;
+export type CustomerSegment = (typeof CUSTOMER_SEGMENTS)[number];
+
+/** Days without a paid order before a past buyer counts as dormant. */
+export const DORMANT_AFTER_DAYS = 30;
+
+export const CUSTOMER_SEGMENT_LABELS: Record<CustomerSegment, { label: string; description: string }> = {
+  ALL: { label: 'Everyone', description: 'Every active customer.' },
+  VERIFIED: { label: 'Verified', description: 'Verified (مميز) customers — completed at least one paid order.' },
+  REGULAR: { label: 'Regular', description: 'Not verified yet — the ones the welcome gift is for.' },
+  BUYERS: { label: 'Buyers', description: 'Have paid for at least one order.' },
+  NON_BUYERS: { label: 'Never bought', description: 'Opened the bot but never completed a paid order.' },
+  DORMANT: {
+    label: `Dormant (${DORMANT_AFTER_DAYS}d)`,
+    description: `Bought before, but nothing paid in the last ${DORMANT_AFTER_DAYS} days.`,
+  },
+};

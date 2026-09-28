@@ -108,12 +108,51 @@ export default function OrderDetailPage({ params }: { params: Promise<{ id: stri
                 </div>
               ))}
               <Separator className="my-2" />
+              {Number(order.discountTotal) > 0 && (
+                <>
+                  <div className="flex justify-between text-sm text-muted-foreground">
+                    <span>Subtotal</span>
+                    <span>
+                      {order.subtotal} {order.currency}
+                    </span>
+                  </div>
+                  {Number(order.memberDiscount) > 0 && (
+                    <div className="flex justify-between text-sm text-success">
+                      <span>{order.memberDiscountKind === 'WELCOME' ? 'Welcome gift' : 'Verified customer discount'}</span>
+                      <span>
+                        −{order.memberDiscount} {order.currency}
+                      </span>
+                    </div>
+                  )}
+                  {order.couponCode && Number(order.discountTotal) > Number(order.memberDiscount) && (
+                    <div className="flex justify-between text-sm text-success">
+                      <span>Coupon {order.couponCode}</span>
+                      <span>
+                        −{(Number(order.discountTotal) - Number(order.memberDiscount)).toFixed(2)} {order.currency}
+                      </span>
+                    </div>
+                  )}
+                </>
+              )}
               <div className="flex justify-between text-sm font-semibold">
                 <span>Total</span>
                 <span>
                   {order.total} {order.currency}
                 </span>
               </div>
+              {order.payAmount && order.payCurrency && (
+                <div className="mt-1 flex justify-between rounded-md bg-muted px-2 py-1.5 text-sm">
+                  <span>Customer transfers</span>
+                  <span className="font-semibold">
+                    {order.payAmount} {order.payCurrency}
+                    {order.exchangeRate && (
+                      <span className="ml-1 text-xs font-normal text-muted-foreground">
+                        @ {Number(order.exchangeRate)}
+                      </span>
+                    )}
+                  </span>
+                </div>
+              )}
               {order.cancelReason && (
                 <p className="mt-2 text-xs text-destructive">Cancel reason: {order.cancelReason}</p>
               )}
@@ -125,6 +164,11 @@ export default function OrderDetailPage({ params }: { params: Promise<{ id: stri
               <p className="mb-1 font-medium">Customer</p>
               <p dir="auto">
                 {[order.customer.firstName, order.customer.lastName].filter(Boolean).join(' ') || '—'}
+                {order.customer.verifiedAt && (
+                  <Badge variant="success" className="ml-2">
+                    ★ Verified
+                  </Badge>
+                )}
                 {order.customer.status !== 'ACTIVE' && (
                   <Badge variant="destructive" className="ml-2">
                     {order.customer.status}

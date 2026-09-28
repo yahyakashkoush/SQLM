@@ -98,9 +98,12 @@ export class CouponsService {
       throw new CouponNotUsableError('الكود ده خلص عدد مرات استخدامه.');
     }
 
-    const used = await tx.couponRedemption.count({
+    const mine = await tx.couponRedemption.aggregate({
       where: { couponId: quote.couponId, customerId },
+      _count: true,
+      _max: { customerSeq: true },
     });
+    const used = mine._count;
 
     // Re-checked here, not just in `quote`. That check runs before this
     // transaction opens, so two checkouts a moment apart both pass it —
@@ -123,7 +126,10 @@ export class CouponsService {
           customerId,
           orderId,
           amount: quote.discount,
-          customerSeq: used + 1,
+          // Highest + 1, not count + 1: a cancelled order hands its use back
+          // by deleting its row, which can leave a gap below the highest
+          // ordinal, and count + 1 would then collide with a live row.
+          customerSeq: (mine._max.customerSeq ?? 0) + 1,
         },
       });
     } catch (error) {
@@ -136,6 +142,26 @@ export class CouponsService {
       }
       throw error;
     }
+  }
+
+  /**
+   * Hands a use back when the order that took it is cancelled — the
+   * customer never got the discount, so it should not count against the
+   * code's cap or theirs. Deleting the redemption row and decrementing the
+   * counter happen in the cancelling transaction, so either both land or
+   * neither does. A no-op for an order that used no coupon.
+   */
+  async releaseForOrder(tx: PrismaTx, orderId: string): Promise<void> {
+    const redemption = await tx.couponRedemption.findUnique({ where: { orderId } });
+    if (!redemption) return;
+
+    const removed = await tx.couponRedemption.deleteMany({ where: { id: redemption.id } });
+    if (removed.count === 0) return;
+    await tx.$executeRaw`
+      UPDATE "coupons"
+         SET "timesRedeemed" = GREATEST("timesRedeemed" - 1, 0)
+       WHERE "id" = ${redemption.couponId}
+    `;
   }
 
   // ---------------------------------------------------------------------------

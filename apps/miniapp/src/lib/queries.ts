@@ -87,3 +87,9 @@ export function useTicket(id: string | null) {
     refetchInterval: 8000,
   });
 }
+
+/** Tier and gift, for the shop banner and the account page. */
+export function usePerks() {
+  const hasSession = useAuthStore((s) => Boolean(s.accessToken));
+  return useQuery({ queryKey: ['perks'], queryFn: api.perks, enabled: hasSession, staleTime: 60_000 });
+}

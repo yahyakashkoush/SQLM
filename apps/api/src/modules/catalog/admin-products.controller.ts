@@ -61,7 +61,7 @@ export class AdminProductsController {
       product.shortDescription ?? '',
       `💰 السعر: ${product.price.toString()} ${product.currency}`,
     ].filter(Boolean);
-    return this.notifications.broadcastToAllCustomers({
+    return this.notifications.broadcastToCustomers({
       kind: 'product.new',
       summary: lines.join('\n\n'),
       imageUrl: product.images[0],

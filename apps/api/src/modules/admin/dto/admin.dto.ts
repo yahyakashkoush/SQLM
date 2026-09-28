@@ -13,7 +13,7 @@ import {
   Min,
   MinLength,
 } from 'class-validator';
-import { ROLES, type Role } from '@sqlm/shared';
+import { CUSTOMER_SEGMENTS, ROLES, type CustomerSegment, type Role } from '@sqlm/shared';
 
 class PaginationDto {
   @IsOptional()
@@ -35,6 +35,15 @@ export class CustomerQueryDto extends PaginationDto {
   @IsString()
   @MaxLength(200)
   search?: string;
+
+  @IsOptional()
+  @IsIn(CUSTOMER_SEGMENTS)
+  segment?: CustomerSegment;
+}
+
+export class SetCustomerVerifiedDto {
+  @IsBoolean()
+  verified!: boolean;
 }
 
 export class AuditLogQueryDto extends PaginationDto {
@@ -114,6 +123,11 @@ export class BroadcastNotificationDto {
   @IsOptional()
   @IsBoolean()
   withStoreButton?: boolean;
+
+  /** Who receives it; every active customer when omitted. */
+  @IsOptional()
+  @IsIn(CUSTOMER_SEGMENTS)
+  segment?: CustomerSegment;
 }
 
 export class StaffIdParamDto {

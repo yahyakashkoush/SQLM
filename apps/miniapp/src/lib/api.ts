@@ -3,9 +3,10 @@ import type {
   Category,
   CustomerDelivery,
   CryptoPayment,
-  CouponQuote,
+  CustomerPerks,
   CustomerProfile,
   Order,
+  OrderQuote,
   PaginatedResult,
   PaymentMethod,
   Product,
@@ -20,6 +21,8 @@ export class ApiError extends Error {
   constructor(
     public status: number,
     message: string,
+    /** Machine-readable reason for the few errors a page reacts to, e.g. PRICE_CHANGED. */
+    public code?: string,
   ) {
     super(message);
     this.name = 'ApiError';
@@ -89,9 +92,12 @@ async function request<T>(
   }
 
   if (!res.ok) {
-    const body = (await res.json().catch(() => ({ message: res.statusText }))) as { message?: string | string[] };
+    const body = (await res.json().catch(() => ({ message: res.statusText }))) as {
+      message?: string | string[];
+      code?: string;
+    };
     const message = Array.isArray(body.message) ? body.message.join('، ') : body.message;
-    throw new ApiError(res.status, message ?? 'حصل خطأ، حاول مرة أخرى');
+    throw new ApiError(res.status, message ?? 'حصل خطأ، حاول مرة أخرى', body.code);
   }
   if (res.status === 204) return undefined as T;
   return res.json() as Promise<T>;
@@ -124,13 +130,18 @@ export const api = {
     paymentMethodId: string;
     idempotencyKey: string;
     couponCode?: string;
+    /** The total on screen; the server refuses (PRICE_CHANGED) to charge anything else. */
+    expectedTotal?: number;
   }) => request<Order>('/orders/checkout', { method: 'POST', body: JSON.stringify(payload) }, true),
 
   cancelOrder: (id: string, reason?: string) =>
     request<Order>(`/orders/${id}/cancel`, { method: 'POST', body: JSON.stringify({ reason }) }, true),
 
-  quoteCoupon: (code: string, items: Array<{ productId: string; quantity: number }>) =>
-    request<CouponQuote>('/coupons/quote', { method: 'POST', body: JSON.stringify({ code, items }) }, true),
+  /** Full server-side price: member discount, coupon, and per-method transfer amounts. */
+  quoteOrder: (items: Array<{ productId: string; quantity: number }>, couponCode?: string) =>
+    request<OrderQuote>('/orders/quote', { method: 'POST', body: JSON.stringify({ items, couponCode }) }, true),
+
+  perks: () => request<CustomerPerks>('/me/perks', {}, true),
 
   listOrders: () => request<PaginatedResult<Order>>('/orders', {}, true),
   getOrder: (id: string) => request<Order>(`/orders/${id}`, {}, true),

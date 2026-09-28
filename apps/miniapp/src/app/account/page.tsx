@@ -6,6 +6,7 @@ import { Card, CardContent } from '@sqlm/ui';
 import { useAuthStore } from '@/store/auth-store';
 import { useTelegram } from '@/components/providers/telegram-provider';
 import { useStoreInfo } from '@/lib/queries';
+import { PerksBanner } from '@/components/account/perks-banner';
 
 export default function AccountPage() {
   const customer = useAuthStore((s) => s.customer);
@@ -39,6 +40,8 @@ export default function AccountPage() {
           {!inTelegram ? 'افتح التطبيق من جوه تيليجرام علشان تسجل دخول.' : (authError ?? 'جاري تسجيل الدخول…')}
         </p>
       )}
+
+      {customer && <PerksBanner />}
 
       {links.map(({ href, label, icon: Icon }) => (
         <Link key={href} href={href}>
