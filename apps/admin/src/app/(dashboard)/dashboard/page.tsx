@@ -7,6 +7,7 @@ import { Badge, Card, CardContent, Skeleton } from '@sqlm/ui';
 import { api, type DashboardStats } from '@/lib/api';
 import { PageHeader } from '@/components/layout/page-header';
 import { useRealtime } from '@/hooks/use-realtime';
+import { RevenuePanel } from '@/components/dashboard/revenue-panel';
 
 export default function DashboardPage() {
   const events = useRealtime();
@@ -53,6 +54,10 @@ export default function DashboardPage() {
     <>
       <PageHeader title="Dashboard" description="What needs attention right now." />
 
+      <div className="mb-6">
+        <RevenuePanel />
+      </div>
+
       {isLoading ? (
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {Array.from({ length: 6 }).map((_, i) => (
@@ -95,7 +100,8 @@ export default function DashboardPage() {
               </div>
             )}
             <p className="mt-4 text-xs text-muted-foreground">
-              Confirmed revenue: <span className="font-medium">{data?.revenue ?? '0'}</span>
+              Confirmed revenue, all time:{' '}
+              <span className="font-medium">{data?.revenue ?? '0'}</span>
             </p>
           </CardContent>
         </Card>

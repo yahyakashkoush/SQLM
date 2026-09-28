@@ -47,3 +47,8 @@ infra/data/
 
 # redis
 dump.rdb
+
+# Local object storage. The e2e suite runs with S3_ENDPOINT unset, so uploads
+# fall back to disk here and every test run leaves payment-proof images behind.
+storage-data/
+**/storage-data/

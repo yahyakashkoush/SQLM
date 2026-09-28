@@ -2,13 +2,14 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { CheckCircle2, Circle, Loader2 } from 'lucide-react';
-import { Button, Card, CardContent, Separator } from '@sqlm/ui';
+import { CheckCircle2, Circle, Loader2, TicketPercent, X } from 'lucide-react';
+import { Button, Card, CardContent, Input, Separator } from '@sqlm/ui';
 import { usePaymentMethods } from '@/lib/queries';
 import { cartSubtotal, useCartStore } from '@/store/cart-store';
 import { useAuthStore } from '@/store/auth-store';
 import { api, ApiError } from '@/lib/api';
 import { formatMoney } from '@/lib/format';
+import type { CouponQuote } from '@/types/api';
 
 export default function CheckoutPage() {
   const router = useRouter();
@@ -22,6 +23,10 @@ export default function CheckoutPage() {
   const [selectedMethod, setSelectedMethod] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [couponInput, setCouponInput] = useState('');
+  const [coupon, setCoupon] = useState<CouponQuote | null>(null);
+  const [couponError, setCouponError] = useState<string | null>(null);
+  const [checkingCoupon, setCheckingCoupon] = useState(false);
 
   if (items.length === 0) {
     return (
@@ -41,9 +46,37 @@ export default function CheckoutPage() {
   }
 
   const subtotal = cartSubtotal(items);
+  const payable = coupon ? Number(coupon.total) : subtotal;
   const currency = items[0]!.currency;
   // Every enabled method is offered; the admin decides which ones exist.
   const methods = paymentMethods.data ?? [];
+
+  const handleApplyCoupon = async () => {
+    const code = couponInput.trim();
+    if (!code) return;
+    setCheckingCoupon(true);
+    setCouponError(null);
+    try {
+      // Quoted against the cart server-side, so the number shown here is
+      // the number checkout will charge.
+      const quote = await api.quoteCoupon(
+        code,
+        items.map((i) => ({ productId: i.productId, quantity: i.quantity })),
+      );
+      setCoupon(quote);
+    } catch (err) {
+      setCoupon(null);
+      setCouponError(err instanceof ApiError ? err.message : 'تعذّر التحقق من الكود.');
+    } finally {
+      setCheckingCoupon(false);
+    }
+  };
+
+  const removeCoupon = () => {
+    setCoupon(null);
+    setCouponInput('');
+    setCouponError(null);
+  };
 
   const handlePlaceOrder = async () => {
     if (!selectedMethod) {
@@ -58,6 +91,7 @@ export default function CheckoutPage() {
         items: items.map((i) => ({ productId: i.productId, quantity: i.quantity })),
         paymentMethodId: selectedMethod,
         idempotencyKey: key,
+        couponCode: coupon?.code,
       });
       clearCart();
       clearIdempotencyKey();
@@ -83,10 +117,62 @@ export default function CheckoutPage() {
             </div>
           ))}
           <Separator className="my-1" />
+          {coupon && (
+            <>
+              <div className="flex items-center justify-between text-sm text-muted-foreground">
+                <span>المجموع</span>
+                <span>{formatMoney(subtotal, currency)}</span>
+              </div>
+              <div className="flex items-center justify-between text-sm text-success">
+                <span>خصم ({coupon.code})</span>
+                <span>−{formatMoney(coupon.discount, currency)}</span>
+              </div>
+            </>
+          )}
           <div className="flex items-center justify-between text-sm font-semibold">
             <span>الإجمالي</span>
-            <span>{formatMoney(subtotal, currency)}</span>
+            <span>{formatMoney(payable, currency)}</span>
           </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardContent className="flex flex-col gap-2 p-4">
+          <p className="flex items-center gap-2 text-sm font-semibold">
+            <TicketPercent className="h-4 w-4" /> كود خصم
+          </p>
+          {coupon ? (
+            <div className="flex items-center justify-between rounded-lg border border-success/40 bg-success/5 p-3 text-sm">
+              <span>
+                <span className="font-mono font-semibold">{coupon.code}</span> —{' '}
+                <span className="text-success">وفّرت {formatMoney(coupon.discount, currency)}</span>
+              </span>
+              <button type="button" onClick={removeCoupon} aria-label="إزالة الكود">
+                <X className="h-4 w-4 text-muted-foreground" />
+              </button>
+            </div>
+          ) : (
+            <div className="flex gap-2">
+              <Input
+                value={couponInput}
+                onChange={(e) => setCouponInput(e.target.value)}
+                placeholder="اكتب الكود"
+                className="font-mono"
+                dir="ltr"
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') void handleApplyCoupon();
+                }}
+              />
+              <Button
+                variant="outline"
+                disabled={checkingCoupon || !couponInput.trim()}
+                onClick={() => void handleApplyCoupon()}
+              >
+                {checkingCoupon ? <Loader2 className="h-4 w-4 animate-spin" /> : 'تطبيق'}
+              </Button>
+            </div>
+          )}
+          {couponError && <p className="text-xs text-destructive">{couponError}</p>}
         </CardContent>
       </Card>
 
@@ -129,7 +215,7 @@ export default function CheckoutPage() {
       <div className="fixed inset-x-0 bottom-16 z-40 border-t bg-background p-4">
         <Button className="w-full" size="lg" disabled={submitting} onClick={() => void handlePlaceOrder()}>
           {submitting && <Loader2 className="h-4 w-4 animate-spin" />}
-          تأكيد الطلب — {formatMoney(subtotal, currency)}
+          تأكيد الطلب — {formatMoney(payable, currency)}
         </Button>
       </div>
     </main>

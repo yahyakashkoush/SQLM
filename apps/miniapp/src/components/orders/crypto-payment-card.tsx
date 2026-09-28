@@ -1,10 +1,16 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { AlertTriangle, CheckCircle2, Loader2, TimerOff } from 'lucide-react';
-import { Card, CardContent } from '@sqlm/ui';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { AlertTriangle, CheckCircle2, Clock, Loader2, TimerOff } from 'lucide-react';
+import { Button, Card, CardContent } from '@sqlm/ui';
 import { CopyButton } from '@/components/copy-button';
+import { api, ApiError } from '@/lib/api';
 import { useCryptoPayment } from '@/lib/queries';
+
+/** Offer the extension only once the countdown is genuinely running out —
+ *  earlier than this it is noise on a screen that needs to stay simple. */
+const EXTEND_PROMPT_MS = 5 * 60_000;
 
 /** Human network names; the raw exchange codes mean nothing to a customer. */
 const NETWORK_LABELS: Record<string, string> = {
@@ -41,6 +47,16 @@ function useCountdown(expiresAt?: string) {
 export function CryptoPaymentCard({ orderId, methodName }: { orderId: string; methodName: string }) {
   const { data, isLoading, error } = useCryptoPayment(orderId, true);
   const countdown = useCountdown(data?.expiresAt);
+  const queryClient = useQueryClient();
+
+  const extend = useMutation({
+    mutationFn: () => api.extendCryptoPayment(orderId),
+    onSuccess: (fresh) => {
+      // Write through rather than invalidate: the countdown should jump the
+      // instant they tap, not after the next poll comes back.
+      queryClient.setQueryData(['crypto-payment', orderId], fresh);
+    },
+  });
 
   if (isLoading) {
     return (
@@ -95,6 +111,9 @@ export function CryptoPaymentCard({ orderId, methodName }: { orderId: string; me
   }
 
   const network = NETWORK_LABELS[data.network] ?? data.network;
+  const remainingMs = new Date(data.expiresAt).getTime() - Date.now();
+  const canExtend = data.extensionsLeft > 0 && !countdown.expired;
+  const shouldOfferExtend = canExtend && remainingMs <= EXTEND_PROMPT_MS;
 
   return (
     <Card>
@@ -144,6 +163,30 @@ export function CryptoPaymentCard({ orderId, methodName }: { orderId: string; me
             </p>
           </div>
         </div>
+
+        {shouldOfferExtend && (
+          <div className="flex flex-col gap-2 rounded-lg border border-primary/40 bg-primary/5 p-3">
+            <p className="flex items-center gap-2 text-xs">
+              <Clock className="h-4 w-4 shrink-0 text-primary" />
+              المهلة قربت تخلص. لو لسه بتحوّل، مدّدها وهيفضل نفس المبلغ ونفس العنوان.
+            </p>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => extend.mutate()}
+              disabled={extend.isPending}
+            >
+              {extend.isPending ? 'جاري التمديد…' : `مدّد المهلة (${data.extensionsLeft} متبقية)`}
+            </Button>
+            {extend.error && (
+              <p className="text-xs text-destructive">
+                {extend.error instanceof ApiError
+                  ? extend.error.message
+                  : 'تعذّر التمديد، جرّب تاني.'}
+              </p>
+            )}
+          </div>
+        )}
 
         {data.autoConfirmActive ? (
           <p className="flex items-center justify-center gap-2 text-xs text-muted-foreground">

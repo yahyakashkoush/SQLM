@@ -98,6 +98,12 @@ describe('Crypto auto-payments (e2e)', () => {
     return prisma.cryptoPaymentWatch.findUniqueOrThrow({ where: { orderId } });
   }
 
+  /** Any seeded staff row — manual matching records who did it. */
+  async function anyStaffId() {
+    const staff = await prisma.staff.findFirst({ select: { id: true } });
+    return staff?.id;
+  }
+
   beforeAll(async () => {
     const moduleFixture: TestingModule = await Test.createTestingModule({
       imports: [AppModule],
@@ -529,6 +535,234 @@ describe('Crypto auto-payments (e2e)', () => {
 
       expect(res.body.status).toBe('WAITING');
       expect(Number(res.body.amount)).toBeGreaterThan(25);
+    });
+  });
+
+  /**
+   * Money that arrived and paid for nothing. Everything here is about the
+   * store noticing, and being able to put it right without a DB console.
+   */
+  describe('stranded deposits', () => {
+    it('alerts once for a deposit that matched no order, then never again', async () => {
+      const txId = `tx-e2e-stranded-${Date.now()}`;
+      await prisma.cryptoDeposit.create({
+        data: {
+          provider: 'BINANCE',
+          txId,
+          asset: 'USDT',
+          network: 'TRX',
+          amount: new Prisma.Decimal('999.111111'),
+          // Older than the grace window, so it is stranded rather than
+          // simply in flight.
+          seenAt: new Date(Date.now() - 60 * 60_000),
+        },
+      });
+
+      const first = await poller.pollOnce();
+      expect(first.alerted).toBeGreaterThanOrEqual(1);
+      const afterFirst = await prisma.cryptoDeposit.findUniqueOrThrow({
+        where: { provider_txId: { provider: 'BINANCE', txId } },
+      });
+      expect(afterFirst.alertedAt).not.toBeNull();
+
+      // The sweep runs every 40s; re-alerting would bury the real ones.
+      const second = await poller.pollOnce();
+      const stillAlerted = await prisma.cryptoDeposit.findUniqueOrThrow({
+        where: { provider_txId: { provider: 'BINANCE', txId } },
+      });
+      expect(stillAlerted.alertedAt).toEqual(afterFirst.alertedAt);
+      expect(second.alerted).toBe(0);
+    });
+
+    it('offers the near-miss order for an amount that is slightly wrong', async () => {
+      const customer = await newCustomer();
+      const orderId = await checkout(customer.token);
+      const watch = await watchFor(orderId);
+
+      // A last digit mistyped: inside the 1% tolerance.
+      const sent = watch.expectedAmount.sub(new Prisma.Decimal('0.000004'));
+      const deposit = await prisma.cryptoDeposit.create({
+        data: {
+          provider: 'BINANCE',
+          txId: `tx-e2e-near-${Date.now()}`,
+          asset: 'USDT',
+          network: 'TRX',
+          amount: sent,
+          address: 'TTestDepositAddress000000000000000',
+        },
+      });
+
+      const suggestions = await poller.findNearMisses(deposit);
+      expect(suggestions[0]?.orderId).toBe(orderId);
+    });
+
+    it('does not offer an order whose amount is nowhere near', async () => {
+      const customer = await newCustomer();
+      await checkout(customer.token);
+
+      const deposit = await prisma.cryptoDeposit.create({
+        data: {
+          provider: 'BINANCE',
+          txId: `tx-e2e-far-${Date.now()}`,
+          asset: 'USDT',
+          network: 'TRX',
+          amount: new Prisma.Decimal('5000'),
+        },
+      });
+
+      expect(await poller.findNearMisses(deposit)).toHaveLength(0);
+    });
+
+    it('credits a stranded deposit against an order by hand, and pays it', async () => {
+      const customer = await newCustomer();
+      const orderId = await checkout(customer.token);
+      const watch = await watchFor(orderId);
+
+      // Simulate the customer paying after their window closed.
+      await prisma.cryptoPaymentWatch.update({
+        where: { id: watch.id },
+        data: { status: 'EXPIRED', claimKey: null },
+      });
+
+      const deposit = await prisma.cryptoDeposit.create({
+        data: {
+          provider: 'BINANCE',
+          txId: `tx-e2e-manual-${Date.now()}`,
+          asset: 'USDT',
+          network: 'TRX',
+          amount: watch.expectedAmount,
+        },
+      });
+
+      await poller.matchManually(deposit.id, orderId, (await anyStaffId())!);
+
+      const order = await prisma.order.findUniqueOrThrow({ where: { id: orderId } });
+      expect(PAID_OR_LATER).toContain(order.status);
+      expect(order.paidAt).not.toBeNull();
+
+      const credited = await prisma.cryptoDeposit.findUniqueOrThrow({ where: { id: deposit.id } });
+      expect(credited.creditedAt).not.toBeNull();
+      expect(credited.orderId).toBe(orderId);
+      expect(credited.matchedByStaffId).not.toBeNull();
+    });
+
+    it('refuses to credit the same deposit twice', async () => {
+      const customer = await newCustomer();
+      const orderA = await checkout(customer.token);
+      const orderB = await checkout(customer.token);
+      const staffId = (await anyStaffId())!;
+
+      const deposit = await prisma.cryptoDeposit.create({
+        data: {
+          provider: 'BINANCE',
+          txId: `tx-e2e-twice-${Date.now()}`,
+          asset: 'USDT',
+          network: 'TRX',
+          amount: new Prisma.Decimal('25.5'),
+        },
+      });
+
+      await poller.matchManually(deposit.id, orderA, staffId);
+      await expect(poller.matchManually(deposit.id, orderB, staffId)).rejects.toThrow();
+
+      const b = await prisma.order.findUniqueOrThrow({ where: { id: orderB } });
+      expect(b.paidAt).toBeNull();
+    });
+
+    it('refuses to credit an order that is already paid', async () => {
+      const customer = await newCustomer();
+      const orderId = await checkout(customer.token);
+      const watch = await watchFor(orderId);
+      const staffId = (await anyStaffId())!;
+
+      exchange.deposits = [
+        {
+          txId: `tx-e2e-alreadypaid-${Date.now()}`,
+          asset: 'USDT',
+          network: 'TRX',
+          amount: watch.expectedAmount.toString(),
+          address: 'TTestDepositAddress000000000000000',
+          rawStatus: 'SUCCESS',
+        },
+      ];
+      await poller.pollOnce();
+      exchange.deposits = [];
+
+      const second = await prisma.cryptoDeposit.create({
+        data: {
+          provider: 'BINANCE',
+          txId: `tx-e2e-extra-${Date.now()}`,
+          asset: 'USDT',
+          network: 'TRX',
+          amount: new Prisma.Decimal('12'),
+        },
+      });
+
+      await expect(poller.matchManually(second.id, orderId, staffId)).rejects.toThrow();
+    });
+  });
+
+  describe('extending the deposit window', () => {
+    it('pushes the deadline out and keeps the same amount reserved', async () => {
+      const customer = await newCustomer();
+      const orderId = await checkout(customer.token);
+      const before = await watchFor(orderId);
+
+      const res = await request(app.getHttpServer())
+        .post(`/api/v1/orders/${orderId}/crypto-payment/extend`)
+        .set('Authorization', `Bearer ${customer.token}`)
+        .expect(201);
+
+      expect(new Date(res.body.expiresAt).getTime()).toBeGreaterThan(before.expiresAt.getTime());
+      // The amount is the identifier, so a transfer already in flight has
+      // to keep matching.
+      expect(res.body.amount).toBe(before.expectedAmount.toString());
+      expect(res.body.extensionsUsed).toBe(1);
+    });
+
+    it('stops after the allowed number of extensions', async () => {
+      const customer = await newCustomer();
+      const orderId = await checkout(customer.token);
+
+      await request(app.getHttpServer())
+        .post(`/api/v1/orders/${orderId}/crypto-payment/extend`)
+        .set('Authorization', `Bearer ${customer.token}`)
+        .expect(201);
+      await request(app.getHttpServer())
+        .post(`/api/v1/orders/${orderId}/crypto-payment/extend`)
+        .set('Authorization', `Bearer ${customer.token}`)
+        .expect(201);
+
+      await request(app.getHttpServer())
+        .post(`/api/v1/orders/${orderId}/crypto-payment/extend`)
+        .set('Authorization', `Bearer ${customer.token}`)
+        .expect(409);
+    });
+
+    it('will not extend someone else\'s order', async () => {
+      const owner = await newCustomer();
+      const stranger = await newCustomer();
+      const orderId = await checkout(owner.token);
+
+      await request(app.getHttpServer())
+        .post(`/api/v1/orders/${orderId}/crypto-payment/extend`)
+        .set('Authorization', `Bearer ${stranger.token}`)
+        .expect(404);
+    });
+
+    it('will not extend a window that already closed', async () => {
+      const customer = await newCustomer();
+      const orderId = await checkout(customer.token);
+      const watch = await watchFor(orderId);
+      await prisma.cryptoPaymentWatch.update({
+        where: { id: watch.id },
+        data: { status: 'EXPIRED', claimKey: null },
+      });
+
+      await request(app.getHttpServer())
+        .post(`/api/v1/orders/${orderId}/crypto-payment/extend`)
+        .set('Authorization', `Bearer ${customer.token}`)
+        .expect(409);
     });
   });
 });

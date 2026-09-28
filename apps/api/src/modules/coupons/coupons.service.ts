@@ -102,6 +102,20 @@ export class CouponsService {
       where: { couponId: quote.couponId, customerId },
     });
 
+    // Re-checked here, not just in `quote`. That check runs before this
+    // transaction opens, so two checkouts a moment apart both pass it —
+    // the second one's quote sees zero uses because the first has not
+    // committed yet. Reading the count inside the transaction is what
+    // catches the staggered case; the unique index below catches the
+    // simultaneous one, where both compute the same ordinal.
+    const coupon = await tx.coupon.findUniqueOrThrow({
+      where: { id: quote.couponId },
+      select: { perCustomerLimit: true },
+    });
+    if (used >= coupon.perCustomerLimit) {
+      throw new CouponNotUsableError('إنت استخدمت الكود ده قبل كده.');
+    }
+
     try {
       await tx.couponRedemption.create({
         data: {

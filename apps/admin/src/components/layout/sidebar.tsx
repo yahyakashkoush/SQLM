@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import {
+  TicketPercent,
   Bell,
   Bitcoin,
   Bot,
@@ -39,6 +40,7 @@ const NAV: Array<{ href: string; label: string; icon: typeof Package; permission
   { href: '/delivery-templates', label: 'Delivery Templates', icon: LayoutTemplate, permission: 'delivery.read' },
   { href: '/payment-methods', label: 'Payment Methods', icon: CreditCard, permission: 'payments.methods.read' },
   { href: '/crypto-payments', label: 'Crypto Payments', icon: Bitcoin, permission: 'payments.proofs.read' },
+  { href: '/coupons', label: 'Coupons', icon: TicketPercent, permission: 'coupons.read' },
   { href: '/customers', label: 'Customers', icon: Users, permission: 'customers.read' },
   { href: '/notifications', label: 'Broadcast', icon: Bell, permission: 'settings.write' },
   { href: '/bot', label: 'Telegram Bot', icon: Bot, permission: 'settings.read' },

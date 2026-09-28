@@ -2,8 +2,8 @@
 
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { AlertTriangle, CheckCircle2, RefreshCw } from 'lucide-react';
-import { Badge, Button, Card, CardContent } from '@sqlm/ui';
+import { AlertTriangle, CheckCircle2, Link2, RefreshCw } from 'lucide-react';
+import { Badge, Button, Card, CardContent, Input } from '@sqlm/ui';
 import { api, type CryptoDeposit, type CryptoWatch } from '@/lib/api';
 import { PageHeader } from '@/components/layout/page-header';
 import { DataTable } from '@/components/data-table';
@@ -25,6 +25,8 @@ export default function CryptoPaymentsPage() {
   const queryClient = useQueryClient();
   const can = useAuthStore((s) => s.can);
   const [tab, setTab] = useState<'watches' | 'deposits'>('watches');
+  /** Which deposit's match form is open, and what order id is typed in it. */
+  const [matching, setMatching] = useState<{ depositId: string; orderId: string } | null>(null);
 
   const providers = useQuery({
     queryKey: ['crypto-providers'],
@@ -51,7 +53,18 @@ export default function CryptoPaymentsPage() {
     },
   });
 
+  const match = useMutation({
+    mutationFn: ({ depositId, orderId }: { depositId: string; orderId: string }) =>
+      api.matchCryptoDeposit(depositId, orderId),
+    onSuccess: () => {
+      setMatching(null);
+      void queryClient.invalidateQueries({ queryKey: ['crypto-deposits'] });
+      void queryClient.invalidateQueries({ queryKey: ['crypto-watches'] });
+    },
+  });
+
   const anyConfigured = providers.data?.some((p) => p.configured) ?? false;
+  const unmatchedCount = deposits.data?.filter((d) => !d.creditedAt).length ?? 0;
 
   return (
     <>
@@ -96,7 +109,7 @@ export default function CryptoPaymentsPage() {
           {pollNow.data && (
             <p className="text-xs text-muted-foreground">
               Last check: {pollNow.data.ingested} new deposit(s), {pollNow.data.settled} settled,{' '}
-              {pollNow.data.expired} expired
+              {pollNow.data.expired} expired, {pollNow.data.alerted} stranded
               {pollNow.data.errors.length > 0 && ` — ${pollNow.data.errors.join('; ')}`}
             </p>
           )}
@@ -109,6 +122,11 @@ export default function CryptoPaymentsPage() {
         </Button>
         <Button size="sm" variant={tab === 'deposits' ? 'default' : 'outline'} onClick={() => setTab('deposits')}>
           Deposits seen
+          {unmatchedCount > 0 && (
+            <Badge variant="destructive" className="ms-1">
+              {unmatchedCount}
+            </Badge>
+          )}
         </Button>
       </div>
 
@@ -163,12 +181,75 @@ export default function CryptoPaymentsPage() {
             {
               header: 'Applied to',
               // An uncredited deposit is the one support has to act on: it
-              // is real money that matched no order, usually a wrong amount.
+              // is real money that matched no order, usually a wrong amount
+              // or a payment that landed after the window closed. The
+              // suggestions are the orders whose expected amount is within
+              // 1% of what arrived — almost always the right answer.
               cell: (r) =>
                 r.orderNumber ? (
                   <Badge variant="success">#{r.orderNumber}</Badge>
+                ) : !can('payments.proofs.review') ? (
+                  <Badge variant="destructive">unmatched</Badge>
+                ) : matching?.depositId === r.id ? (
+                  <div className="flex min-w-[16rem] flex-col gap-2">
+                    <div className="flex gap-1">
+                      <Input
+                        value={matching.orderId}
+                        onChange={(e) => setMatching({ depositId: r.id, orderId: e.target.value })}
+                        placeholder="Order id"
+                        className="h-8 font-mono text-xs"
+                      />
+                      <Button
+                        size="sm"
+                        disabled={match.isPending || !matching.orderId.trim()}
+                        onClick={() =>
+                          match.mutate({ depositId: r.id, orderId: matching.orderId.trim() })
+                        }
+                      >
+                        {match.isPending ? '…' : 'Credit'}
+                      </Button>
+                      <Button size="sm" variant="ghost" onClick={() => setMatching(null)}>
+                        ✕
+                      </Button>
+                    </div>
+                    {r.suggestions.length > 0 && (
+                      <div className="flex flex-wrap gap-1">
+                        {r.suggestions.map((sug) => (
+                          <button
+                            key={sug.watchId}
+                            type="button"
+                            className="rounded border px-2 py-1 text-xs hover:bg-muted"
+                            onClick={() => setMatching({ depositId: r.id, orderId: sug.orderId })}
+                          >
+                            #{sug.orderNumber} · wants {sug.expectedAmount} ({sug.difference})
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                    {match.error && (
+                      <p className="text-xs text-destructive">
+                        {match.error instanceof Error ? match.error.message : 'Could not credit it.'}
+                      </p>
+                    )}
+                  </div>
                 ) : (
-                  <Badge variant="secondary">unmatched</Badge>
+                  <div className="flex items-center gap-2">
+                    <Badge variant="destructive">unmatched</Badge>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() =>
+                        setMatching({ depositId: r.id, orderId: r.suggestions[0]?.orderId ?? '' })
+                      }
+                    >
+                      <Link2 className="h-3.5 w-3.5" /> Match
+                    </Button>
+                    {r.suggestions.length > 0 && (
+                      <span className="text-xs text-muted-foreground">
+                        near #{r.suggestions[0]!.orderNumber}
+                      </span>
+                    )}
+                  </div>
                 ),
             },
           ]}

@@ -8,11 +8,7 @@ import { NotificationDispatcher } from '../notifications/notification-dispatcher
 import { InventoryService } from '../inventory/inventory.service';
 import { InsufficientInventoryError } from '../inventory/errors/insufficient-inventory.error';
 import { assertTransitionAllowed, InvalidOrderTransitionError } from './order-state-machine';
-import {
-  ProductNotPurchasableError,
-  PaymentMethodUnavailableError,
-  OrderNotCancellableError,
-} from './errors/order.errors';
+import { PaymentMethodUnavailableError, OrderNotCancellableError } from './errors/order.errors';
 import { CryptoWatchService } from '../crypto-payments/crypto-watch.service';
 import { CouponsService } from '../coupons/coupons.service';
 import { CartPricingService } from './cart-pricing.service';

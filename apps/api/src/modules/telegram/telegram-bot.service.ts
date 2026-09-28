@@ -411,16 +411,17 @@ export class TelegramBotService implements OnModuleInit {
 
     if (products.length === 0) {
       await ctx.reply(`مفيش نتايج لـ "${query}". جرّب كلمة تانية أو اتصفّح كل المنتجات.`, {
-        reply_markup: buildWebAppButton('عرض المنتجات', `${this.miniAppUrl}/shop`),
+        reply_markup: buildWebAppButton('عرض المنتجات', `${this.miniAppUrl}/products`),
       });
       return;
     }
 
     const lines = products.map((p) => `• ${p.name} — ${p.price.toString()} ${p.currency}`);
+    // /products is the page that reads ?search=; /shop ignores it.
     await ctx.reply(`🔎 نتايج البحث عن "${query}":\n\n${lines.join('\n')}`, {
       reply_markup: buildWebAppButton(
         'افتح النتايج في المتجر',
-        `${this.miniAppUrl}/shop?search=${encodeURIComponent(query)}`,
+        `${this.miniAppUrl}/products?search=${encodeURIComponent(query)}`,
       ),
     });
   }

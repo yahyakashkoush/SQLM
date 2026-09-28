@@ -60,6 +60,9 @@ export interface CryptoPayment {
   status: 'WAITING' | 'MATCHED' | 'EXPIRED' | 'CANCELLED';
   expiresAt: string;
   matchedAt: string | null;
+  extensionsUsed: number;
+  /** How many more times the countdown may be pushed out. */
+  extensionsLeft: number;
   /** False when the store has no key for this exchange, so nothing is
    *  actually watching and the customer must still upload a receipt. */
   autoConfirmActive: boolean;
@@ -80,7 +83,10 @@ export interface Order {
   status: OrderStatus;
   currency: string;
   subtotal: string;
+  /** What a coupon took off. "0" when none was used. */
+  discountTotal: string;
   total: string;
+  couponCode: string | null;
   paymentMethodId: string | null;
   createdAt: string;
   items: OrderItem[];
@@ -128,3 +134,10 @@ export interface CustomerProfile {
 }
 
 export type { PaginatedResult };
+
+export interface CouponQuote {
+  code: string;
+  subtotal: string;
+  discount: string;
+  total: string;
+}

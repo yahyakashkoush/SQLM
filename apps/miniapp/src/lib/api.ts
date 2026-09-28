@@ -3,6 +3,7 @@ import type {
   Category,
   CustomerDelivery,
   CryptoPayment,
+  CouponQuote,
   CustomerProfile,
   Order,
   PaginatedResult,
@@ -122,7 +123,14 @@ export const api = {
     items: Array<{ productId: string; quantity: number }>;
     paymentMethodId: string;
     idempotencyKey: string;
+    couponCode?: string;
   }) => request<Order>('/orders/checkout', { method: 'POST', body: JSON.stringify(payload) }, true),
+
+  cancelOrder: (id: string, reason?: string) =>
+    request<Order>(`/orders/${id}/cancel`, { method: 'POST', body: JSON.stringify({ reason }) }, true),
+
+  quoteCoupon: (code: string, items: Array<{ productId: string; quantity: number }>) =>
+    request<CouponQuote>('/coupons/quote', { method: 'POST', body: JSON.stringify({ code, items }) }, true),
 
   listOrders: () => request<PaginatedResult<Order>>('/orders', {}, true),
   getOrder: (id: string) => request<Order>(`/orders/${id}`, {}, true),
@@ -131,6 +139,9 @@ export const api = {
 
   getCryptoPayment: (orderId: string) =>
     request<CryptoPayment>(`/orders/${orderId}/crypto-payment`, {}, true),
+
+  extendCryptoPayment: (orderId: string) =>
+    request<CryptoPayment>(`/orders/${orderId}/crypto-payment/extend`, { method: 'POST' }, true),
 
   storeInfo: () => request<StoreInfo>('/store'),
 

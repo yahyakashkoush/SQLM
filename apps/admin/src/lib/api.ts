@@ -136,6 +136,16 @@ export const api = {
   cryptoDeposits: (unmatched?: boolean) =>
     get<CryptoDeposit[]>(`/admin/crypto-payments/deposits${unmatched ? '?unmatched=true' : ''}`),
   cryptoPollNow: () => post<CryptoPollSummary>('/admin/crypto-payments/poll', {}),
+  matchCryptoDeposit: (depositId: string, orderId: string) =>
+    post<{ matched: true }>(`/admin/crypto-payments/deposits/${depositId}/match`, { orderId }),
+
+  coupons: () => get<Coupon[]>('/admin/coupons'),
+  createCoupon: (payload: CouponInput) => post<Coupon>('/admin/coupons', payload),
+  updateCoupon: (id: string, payload: Partial<CouponInput>) =>
+    patch<Coupon>(`/admin/coupons/${id}`, payload),
+  deactivateCoupon: (id: string) => del(`/admin/coupons/${id}`),
+
+  revenue: (days: number) => get<RevenueReport>(`/admin/revenue?days=${days}`),
   deletePaymentMethod: (id: string) => del(`/admin/payment-methods/${id}`),
 
   paymentProofs: () => get<PaymentProof[]>('/admin/payment-proofs'),
@@ -370,6 +380,15 @@ export interface CryptoWatch {
   createdAt: string;
 }
 
+export interface CryptoNearMiss {
+  watchId: string;
+  orderId: string;
+  orderNumber: number;
+  expectedAmount: string;
+  /** Signed: positive when the customer sent more than was asked. */
+  difference: string;
+}
+
 export interface CryptoDeposit {
   id: string;
   provider: PaymentProvider;
@@ -380,14 +399,20 @@ export interface CryptoDeposit {
   address: string | null;
   seenAt: string;
   creditedAt: string | null;
+  /** When staff were told this one matched nothing. */
+  alertedAt: string | null;
   orderId: string | null;
   orderNumber: number | null;
+  matchedByStaffId: string | null;
+  /** Orders whose expected amount is within 1% — empty once credited. */
+  suggestions: CryptoNearMiss[];
 }
 
 export interface CryptoPollSummary {
   ingested: number;
   settled: number;
   expired: number;
+  alerted: number;
   errors: string[];
 }
 
@@ -516,4 +541,48 @@ export interface DashboardStats {
   lowStockProducts: number;
   revenue: string;
   customers: number;
+}
+
+export interface Coupon {
+  id: string;
+  code: string;
+  type: 'PERCENT' | 'FIXED';
+  value: string;
+  minSubtotal: string | null;
+  maxDiscount: string | null;
+  maxRedemptions: number | null;
+  perCustomerLimit: number;
+  startsAt: string | null;
+  endsAt: string | null;
+  active: boolean;
+  timesRedeemed: number;
+  createdAt: string;
+}
+
+export interface CouponInput {
+  code: string;
+  type: 'PERCENT' | 'FIXED';
+  value: number;
+  minSubtotal?: number;
+  maxDiscount?: number;
+  maxRedemptions?: number;
+  perCustomerLimit?: number;
+  startsAt?: string;
+  endsAt?: string;
+  active?: boolean;
+}
+
+export interface RevenueReport {
+  days: number;
+  from: string;
+  to: string;
+  revenue: string;
+  orders: number;
+  discountsGiven: string;
+  averageOrderValue: string;
+  previous: { revenue: string; orders: number };
+  /** Null when the previous period had no revenue to compare against. */
+  changePercent: number | null;
+  byDay: Array<{ day: string; revenue: string; orders: number }>;
+  topProducts: Array<{ productId: string; name: string; units: number; revenue: string }>;
 }

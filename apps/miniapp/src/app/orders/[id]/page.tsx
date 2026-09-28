@@ -44,6 +44,9 @@ export default function OrderDetailPage({ params }: { params: Promise<{ id: stri
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
+  const [confirmingCancel, setConfirmingCancel] = useState(false);
+  const [cancelError, setCancelError] = useState<string | null>(null);
+  const [cancelling, setCancelling] = useState(false);
 
   if (isLoading) {
     return <main className="p-4 text-sm text-muted-foreground">جاري تحميل الطلب…</main>;
@@ -58,6 +61,21 @@ export default function OrderDetailPage({ params }: { params: Promise<{ id: stri
   const rejected = order.status === 'PENDING_PAYMENT' && lastProof?.status === 'REJECTED' ? lastProof : null;
   const stepIndex = STEPS.findIndex((s) => s.statuses.includes(order.status));
   const closed = ['CANCELLED', 'REFUNDED'].includes(order.status);
+
+  const handleCancel = async () => {
+    setCancelling(true);
+    setCancelError(null);
+    try {
+      await api.cancelOrder(order.id);
+      await refetch();
+      void queryClient.invalidateQueries({ queryKey: ['orders'] });
+      setConfirmingCancel(false);
+    } catch (err) {
+      setCancelError(err instanceof ApiError ? err.message : 'تعذّر إلغاء الطلب، حاول مرة أخرى.');
+    } finally {
+      setCancelling(false);
+    }
+  };
 
   const handleFileSelected = async (file: File) => {
     setUploading(true);
@@ -162,6 +180,18 @@ export default function OrderDetailPage({ params }: { params: Promise<{ id: stri
             </div>
           ))}
           <Separator className="my-1" />
+          {Number(order.discountTotal) > 0 && (
+            <>
+              <div className="flex items-center justify-between text-sm text-muted-foreground">
+                <span>المجموع</span>
+                <span>{formatMoney(order.subtotal, order.currency)}</span>
+              </div>
+              <div className="flex items-center justify-between text-sm text-success">
+                <span>خصم {order.couponCode ? `(${order.couponCode})` : ''}</span>
+                <span>−{formatMoney(order.discountTotal, order.currency)}</span>
+              </div>
+            </>
+          )}
           <div className="flex items-center justify-between text-sm font-semibold">
             <span>الإجمالي</span>
             <span>{formatMoney(order.total, order.currency)}</span>
@@ -237,6 +267,47 @@ export default function OrderDetailPage({ params }: { params: Promise<{ id: stri
 
       {lastProof && order.status !== 'PENDING_PAYMENT' && lastProof.status === 'PENDING' && (
         <p className="text-center text-xs text-muted-foreground">تم رفع إثبات الدفع {formatDate(lastProof.uploadedAt)}</p>
+      )}
+
+      {/* Only before a proof is in. Past that a transfer may already have
+          been made and staff may be mid-review, so it goes through support. */}
+      {['CREATED', 'PENDING_PAYMENT'].includes(order.status) && (
+        <Card className="border-destructive/30">
+          <CardContent className="flex flex-col gap-2 p-4">
+            {confirmingCancel ? (
+              <>
+                <p className="text-sm font-medium">متأكد إنك عايز تلغي الطلب ده؟</p>
+                <p className="text-xs text-muted-foreground">
+                  المنتجات هترجع متاحة لغيرك، ومش هتقدر ترجّع الطلب ده تاني — هتحتاج تطلبه من
+                  الأول.
+                </p>
+                <div className="flex gap-2">
+                  <Button
+                    variant="destructive"
+                    size="sm"
+                    disabled={cancelling}
+                    onClick={() => void handleCancel()}
+                  >
+                    {cancelling ? 'جاري الإلغاء…' : 'أيوه، ألغي الطلب'}
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={cancelling}
+                    onClick={() => setConfirmingCancel(false)}
+                  >
+                    رجوع
+                  </Button>
+                </div>
+              </>
+            ) : (
+              <Button variant="ghost" size="sm" onClick={() => setConfirmingCancel(true)}>
+                <XCircle className="h-4 w-4" /> إلغاء الطلب
+              </Button>
+            )}
+            {cancelError && <p className="text-xs text-destructive">{cancelError}</p>}
+          </CardContent>
+        </Card>
       )}
 
       <Link href={`/support?order=${order.id}`} className="flex items-center justify-center gap-2 py-2 text-sm text-primary">
