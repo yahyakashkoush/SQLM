@@ -57,15 +57,23 @@ export class PaymentMethodsService {
  * Exchanges report tickers and chains upper-cased and the poller matches
  * on exact equality, so a method saved as "usdt" would take orders that
  * could never settle. Normalising here makes that unrepresentable.
+ *
+ * Only strings are touched. The admin form sends these as `null` on every
+ * manual method (bank, wallet, InstaPay) so that switching away from
+ * crypto clears them, and `@IsOptional` lets that null through — so a
+ * `!== undefined` guard here would call `.trim()` on null and turn every
+ * save of a manual method into a 500.
  */
 function normalizeCryptoFields<T extends UpdatePaymentMethodDto>(dto: T): T {
   return {
     ...dto,
-    ...(dto.cryptoAsset !== undefined && { cryptoAsset: dto.cryptoAsset.trim().toUpperCase() }),
-    ...(dto.cryptoNetwork !== undefined && {
+    ...(typeof dto.cryptoAsset === 'string' && {
+      cryptoAsset: dto.cryptoAsset.trim().toUpperCase(),
+    }),
+    ...(typeof dto.cryptoNetwork === 'string' && {
       cryptoNetwork: dto.cryptoNetwork.trim().toUpperCase(),
     }),
-    ...(dto.depositAddress !== undefined && { depositAddress: dto.depositAddress.trim() }),
+    ...(typeof dto.depositAddress === 'string' && { depositAddress: dto.depositAddress.trim() }),
   };
 }
 
