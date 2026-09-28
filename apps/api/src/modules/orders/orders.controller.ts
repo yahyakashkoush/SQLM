@@ -1,6 +1,7 @@
 import { Body, Controller, Get, Param, Post, Query, UseGuards } from '@nestjs/common';
 import { OrdersService } from './orders.service';
 import { CheckoutDto } from './dto/checkout.dto';
+import { CancelOrderDto } from './dto/cancel-order.dto';
 import { OrderQueryDto } from './dto/order-query.dto';
 import { JwtCustomerAuthGuard } from '../rbac/guards/jwt-customer-auth.guard';
 import {
@@ -26,5 +27,15 @@ export class OrdersController {
   @Get(':id')
   findById(@CurrentCustomer() customer: AuthenticatedCustomer, @Param('id') id: string) {
     return this.orders.findByIdForCustomer(id, customer.id);
+  }
+
+  /** Walk away from an unpaid order, which also frees the stock it held. */
+  @Post(':id/cancel')
+  cancel(
+    @CurrentCustomer() customer: AuthenticatedCustomer,
+    @Param('id') id: string,
+    @Body() dto: CancelOrderDto,
+  ) {
+    return this.orders.cancelByCustomer(id, customer.id, dto.reason);
   }
 }

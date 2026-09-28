@@ -9,6 +9,7 @@ import { SupportService } from '../support/support.service';
 import { PaymentProofsService } from '../payments/payment-proofs.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { SettingsService } from '../settings/settings.service';
+import { RedisService } from '../redis/redis.service';
 import {
   MENU_ACTION_BY_LABEL,
   buildMainMenuKeyboard,
@@ -21,6 +22,11 @@ const INIT_TIMEOUT_MS = 8000;
 const INIT_RETRY_INTERVAL_MS = 30_000;
 const CAPTION_LIMIT = 1024;
 const PROOF_MIME_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp', 'application/pdf']);
+/** How long a tapped "search" stays armed before the chat is back to support. */
+const SEARCH_ARM_TTL_SECONDS = 120;
+const SEARCH_RESULT_LIMIT = 8;
+
+const searchArmKey = (chatId: number) => `tg:search-arm:${chatId}`;
 
 export interface OutboundMessageOptions {
   imageUrl?: string;
@@ -58,6 +64,7 @@ export class TelegramBotService implements OnModuleInit {
     private readonly paymentProofs: PaymentProofsService,
     private readonly prisma: PrismaService,
     private readonly settings: SettingsService,
+    private readonly redis: RedisService,
   ) {
     const token = this.config.get<string>('TELEGRAM_BOT_TOKEN') || 'unset:unset';
     this.bot = new Bot(token);
@@ -290,6 +297,14 @@ export class TelegramBotService implements OnModuleInit {
         return;
       }
 
+      // Only when the customer just asked to search. Free text is the
+      // support channel, so search has to be explicitly armed or every
+      // question to support would come back as a product list.
+      if (await this.consumeSearchArm(ctx)) {
+        await this.replyWithSearchResults(ctx, text);
+        return;
+      }
+
       const customer = await this.upsertCustomer(ctx);
       if (!customer) return;
       const ticket = await this.support.findOrCreateActiveTicket(customer.id, 'محادثة تيليجرام', text);
@@ -320,9 +335,7 @@ export class TelegramBotService implements OnModuleInit {
         });
         return;
       case 'SEARCH':
-        await ctx.reply('🔎 ابحث عن المنتج اللي محتاجه', {
-          reply_markup: buildWebAppButton('بحث', `${this.miniAppUrl}/shop`),
-        });
+        await this.armSearch(ctx);
         return;
       case 'ORDERS':
         await this.replyWithOrders(ctx);
@@ -341,6 +354,75 @@ export class TelegramBotService implements OnModuleInit {
         await this.replyWithAccount(ctx);
         return;
     }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Product search
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Arms the next message from this chat as a search query.
+   *
+   * In Redis rather than in memory because an update is processed by
+   * whichever worker picks it off the queue, which is rarely the instance
+   * that handled the tap. The TTL is the whole cleanup story: a customer
+   * who taps "بحث" and then wanders off is back to talking to support two
+   * minutes later, with nothing left behind.
+   */
+  private async armSearch(ctx: Context): Promise<void> {
+    const chatId = ctx.chat?.id;
+    if (chatId !== undefined) {
+      await this.redis.client.set(searchArmKey(chatId), '1', 'EX', SEARCH_ARM_TTL_SECONDS);
+    }
+    await ctx.reply('🔎 اكتب اسم المنتج اللي بتدور عليه وأنا أدوّرهولك.');
+  }
+
+  /** True exactly once per arm: GETDEL makes racing updates safe. */
+  private async consumeSearchArm(ctx: Context): Promise<boolean> {
+    const chatId = ctx.chat?.id;
+    if (chatId === undefined) return false;
+    try {
+      return (await this.redis.client.getdel(searchArmKey(chatId))) === '1';
+    } catch (err) {
+      // An unreachable Redis must not swallow the customer's message —
+      // fall through and let it reach support as it always did.
+      this.logger.error(`Search-arm lookup failed: ${err instanceof Error ? err.message : err}`);
+      return false;
+    }
+  }
+
+  private async replyWithSearchResults(ctx: Context, query: string): Promise<void> {
+    // Mirrors ProductsService.listPublic's visibility rule on purpose:
+    // the bot must never surface a product the storefront hides.
+    const products = await this.prisma.product.findMany({
+      where: {
+        status: 'ACTIVE',
+        visibility: 'VISIBLE',
+        OR: [
+          { name: { contains: query, mode: 'insensitive' } },
+          { shortDescription: { contains: query, mode: 'insensitive' } },
+          { tags: { has: query.toLowerCase() } },
+        ],
+      },
+      select: { name: true, slug: true, price: true, currency: true },
+      orderBy: [{ featured: 'desc' }, { createdAt: 'desc' }],
+      take: SEARCH_RESULT_LIMIT,
+    });
+
+    if (products.length === 0) {
+      await ctx.reply(`مفيش نتايج لـ "${query}". جرّب كلمة تانية أو اتصفّح كل المنتجات.`, {
+        reply_markup: buildWebAppButton('عرض المنتجات', `${this.miniAppUrl}/shop`),
+      });
+      return;
+    }
+
+    const lines = products.map((p) => `• ${p.name} — ${p.price.toString()} ${p.currency}`);
+    await ctx.reply(`🔎 نتايج البحث عن "${query}":\n\n${lines.join('\n')}`, {
+      reply_markup: buildWebAppButton(
+        'افتح النتايج في المتجر',
+        `${this.miniAppUrl}/shop?search=${encodeURIComponent(query)}`,
+      ),
+    });
   }
 
   /** A payment screenshot sent straight into the chat is attached to the customer's awaiting-payment order. */

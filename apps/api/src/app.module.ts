@@ -23,6 +23,7 @@ import { TelegramModule } from './modules/telegram/telegram.module';
 import { DeliveryModule } from './modules/delivery/delivery.module';
 import { DeliveryQueueModule } from './modules/delivery/delivery-queue.module';
 import { NotificationsModule } from './modules/notifications/notifications.module';
+import { CouponsModule } from './modules/coupons/coupons.module';
 import { SupportModule } from './modules/support/support.module';
 import { AdminModule } from './modules/admin/admin.module';
 import { CleanupModule } from './modules/cleanup/cleanup.module';
@@ -101,6 +102,7 @@ import { SettingsModule } from './modules/settings/settings.module';
     TelegramModule,
     DeliveryModule,
     NotificationsModule,
+    CouponsModule,
     SupportModule,
     AdminModule,
     CleanupModule,

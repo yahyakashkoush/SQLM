@@ -1,5 +1,5 @@
 generator client {
-  provider = "prisma-client-js"
+  provider      = "prisma-client-js"
   // node:22-slim has OpenSSL 3 but not the `openssl` CLI Prisma probes
   // with, so detection falls back to the 1.1.x engine and the container
   // dies with "cannot open shared object file: libssl.so.1.1". Generating
@@ -205,14 +205,15 @@ model Staff {
   createdAt    DateTime    @default(now())
   updatedAt    DateTime    @updatedAt
 
-  refreshTokens    StaffRefreshToken[]
-  reviewedProofs   PaymentProof[]      @relation("ProofReviewedBy")
-  assignedTickets  SupportTicket[]     @relation("TicketAssignedTo")
-  authoredMessages TicketMessage[]     @relation("MessageAuthorStaff")
-  orderEvents      OrderEvent[]        @relation("OrderEventActorStaff")
-  fulfilledDeliveries Delivery[]       @relation("DeliveryFulfilledBy")
-  auditLogs        AuditLog[]
-  updatedSettings  PlatformSetting[]
+  refreshTokens       StaffRefreshToken[]
+  reviewedProofs      PaymentProof[]      @relation("ProofReviewedBy")
+  assignedTickets     SupportTicket[]     @relation("TicketAssignedTo")
+  authoredMessages    TicketMessage[]     @relation("MessageAuthorStaff")
+  orderEvents         OrderEvent[]        @relation("OrderEventActorStaff")
+  fulfilledDeliveries Delivery[]          @relation("DeliveryFulfilledBy")
+  auditLogs           AuditLog[]
+  updatedSettings     PlatformSetting[]
+  matchedDeposits     CryptoDeposit[]
 
   @@map("staff")
 }
@@ -246,11 +247,12 @@ model Customer {
   createdAt        DateTime       @default(now())
   updatedAt        DateTime       @updatedAt
 
-  orders         Order[]
-  paymentProofs  PaymentProof[]
-  supportTickets SupportTicket[]
-  ticketMessages TicketMessage[] @relation("MessageAuthorCustomer")
-  orderEvents    OrderEvent[]    @relation("OrderEventActorCustomer")
+  orders            Order[]
+  paymentProofs     PaymentProof[]
+  supportTickets    SupportTicket[]
+  ticketMessages    TicketMessage[]    @relation("MessageAuthorCustomer")
+  orderEvents       OrderEvent[]       @relation("OrderEventActorCustomer")
+  couponRedemptions CouponRedemption[]
 
   @@map("customers")
 }
@@ -370,7 +372,15 @@ model Order {
   status          OrderStatus    @default(CREATED)
   currency        String         @default("USD")
   subtotal        Decimal        @db.Decimal(12, 2)
+  /// What the coupon took off. Zero when none was used, so `total` is
+  /// always `subtotal - discountTotal` and nothing has to special-case it.
+  discountTotal   Decimal        @default(0) @db.Decimal(12, 2)
   total           Decimal        @db.Decimal(12, 2)
+  couponId        String?
+  coupon          Coupon?        @relation(fields: [couponId], references: [id], onDelete: SetNull)
+  /// The code as typed, kept even if the coupon is later deleted — an
+  /// order's history must still explain its own price.
+  couponCode      String?
   paymentMethodId String?
   paymentMethod   PaymentMethod? @relation(fields: [paymentMethodId], references: [id], onDelete: SetNull)
   idempotencyKey  String
@@ -382,13 +392,14 @@ model Order {
   createdAt       DateTime       @default(now())
   updatedAt       DateTime       @updatedAt
 
-  items          OrderItem[]
-  events         OrderEvent[]
-  paymentProofs  PaymentProof[]
-  inventoryItems InventoryItem[]
-  supportTickets SupportTicket[]
-  deliveries     Delivery[]
-  cryptoWatch    CryptoPaymentWatch?
+  items            OrderItem[]
+  events           OrderEvent[]
+  paymentProofs    PaymentProof[]
+  inventoryItems   InventoryItem[]
+  supportTickets   SupportTicket[]
+  deliveries       Delivery[]
+  cryptoWatch      CryptoPaymentWatch?
+  couponRedemption CouponRedemption?
 
   @@unique([customerId, idempotencyKey])
   @@index([customerId, status])
@@ -485,20 +496,20 @@ model PaymentMethod {
   /// MANUAL keeps the proof-upload flow. An exchange provider makes this
   /// method self-settling: checkout opens a CryptoPaymentWatch and the
   /// deposit poller marks the order PAID on its own.
-  provider PaymentProvider @default(MANUAL)
+  provider        PaymentProvider @default(MANUAL)
   /// Ticker as the exchange reports it on a deposit record, e.g. "USDT".
-  cryptoAsset String?
+  cryptoAsset     String?
   /// Exchange network code, e.g. "TRX", "BSC", "ETH". Deposits are matched
   /// on it too: the same asset on the wrong chain must not settle an order.
-  cryptoNetwork String?
+  cryptoNetwork   String?
   /// Where the customer sends funds. Display-only — matching keys off the
   /// amount, so a wrong address simply never matches rather than mispaying.
-  depositAddress String?
+  depositAddress  String?
   /// How long a customer has to send the exact amount before the watch
   /// expires and releases its amount back into the pool.
-  watchTtlMinutes Int @default(60)
+  watchTtlMinutes Int             @default(60)
 
-  orders Order[]
+  orders  Order[]
   watches CryptoPaymentWatch[]
 
   @@map("payment_methods")
@@ -526,6 +537,9 @@ model CryptoPaymentWatch {
   expectedAmount  Decimal           @db.Decimal(24, 8)
   status          CryptoWatchStatus @default(WAITING)
   expiresAt       DateTime
+  /// How many times the customer pushed the deadline out. Bounded, so a
+  /// page left open cannot hold an amount out of the pool forever.
+  extensionsUsed  Int               @default(0)
   matchedAt       DateTime?
   createdAt       DateTime          @default(now())
   updatedAt       DateTime          @updatedAt
@@ -554,25 +568,33 @@ model CryptoPaymentWatch {
 /// two pages, or a worker retried after a crash all collide here and the
 /// second attempt is a no-op rather than a second payment.
 model CryptoDeposit {
-  id        String   @id @default(uuid())
-  provider  PaymentProvider
+  id               String              @id @default(uuid())
+  provider         PaymentProvider
   /// The exchange's transaction id. Unique per provider, not globally.
-  txId      String
-  asset     String
-  network   String
-  amount    Decimal  @db.Decimal(24, 8)
-  address   String?
+  txId             String
+  asset            String
+  network          String
+  amount           Decimal             @db.Decimal(24, 8)
+  address          String?
   /// The provider's own status string, kept verbatim for support triage.
-  rawStatus String?
-  creditedAt DateTime?
-  watchId   String?
-  watch     CryptoPaymentWatch? @relation(fields: [watchId], references: [id], onDelete: SetNull)
-  orderId   String?
-  seenAt    DateTime @default(now())
+  rawStatus        String?
+  creditedAt       DateTime?
+  watchId          String?
+  watch            CryptoPaymentWatch? @relation(fields: [watchId], references: [id], onDelete: SetNull)
+  orderId          String?
+  seenAt           DateTime            @default(now())
+  /// When staff were told this deposit arrived and matched nothing. Set
+  /// once so the sweep alerts on a stranded payment exactly one time
+  /// instead of every 40 seconds until someone resolves it.
+  alertedAt        DateTime?
+  /// Who credited it by hand, when the amount matched no watch.
+  matchedByStaffId String?
+  matchedByStaff   Staff?              @relation(fields: [matchedByStaffId], references: [id], onDelete: SetNull)
 
   @@unique([provider, txId])
   @@index([watchId])
   @@index([seenAt])
+  @@index([creditedAt, alertedAt])
   @@map("crypto_deposits")
 }
 
@@ -697,4 +719,76 @@ model TelegramUpdateLog {
   processedAt DateTime?
 
   @@map("telegram_update_log")
+}
+
+enum CouponType {
+  /// `value` is a percentage of the subtotal, 1–100.
+  PERCENT
+  /// `value` is a flat amount in the store's currency.
+  FIXED
+}
+
+/// A redeemable discount code.
+///
+/// Every limit is optional except the per-customer one, so the same model
+/// covers a public launch code, a one-off apology to a single customer, and
+/// a capped campaign — without three tables or a `kind` column that changes
+/// what the other fields mean.
+model Coupon {
+  id    String     @id @default(uuid())
+  /// Always stored upper-cased; lookups upper-case the input to match, so
+  /// "welcome10" and "WELCOME10" are the same code and cannot both exist.
+  code  String     @unique
+  type  CouponType
+  value Decimal    @db.Decimal(12, 2)
+
+  /// Orders under this subtotal cannot use the code.
+  minSubtotal      Decimal? @db.Decimal(12, 2)
+  /// PERCENT only: the ceiling on what a large order can take off.
+  maxDiscount      Decimal? @db.Decimal(12, 2)
+  /// Total redemptions across everyone. NULL means unlimited.
+  maxRedemptions   Int?
+  /// How many times one customer may use it.
+  perCustomerLimit Int      @default(1)
+
+  startsAt DateTime?
+  endsAt   DateTime?
+  active   Boolean   @default(true)
+
+  /// Denormalised count, incremented under the same guard that inserts the
+  /// redemption, so the global cap can be enforced without counting rows.
+  timesRedeemed Int @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  redemptions CouponRedemption[]
+  orders      Order[]
+
+  @@index([active, endsAt])
+  @@map("coupons")
+}
+
+/// One coupon use. The unique on orderId is what makes redemption
+/// exactly-once: a retried checkout cannot spend the same code twice.
+model CouponRedemption {
+  id         String   @id @default(uuid())
+  couponId   String
+  coupon     Coupon   @relation(fields: [couponId], references: [id], onDelete: Cascade)
+  customerId String
+  customer   Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  orderId    String   @unique
+  order      Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  /// What this particular redemption was worth, for reporting.
+  amount     Decimal  @db.Decimal(12, 2)
+  /// This customer's 1-based use of this coupon. Counting rows and then
+  /// inserting would let two concurrent checkouts both see "used 0 times";
+  /// making the ordinal part of a unique index means the loser of that
+  /// race hits a constraint instead of a second free discount.
+  customerSeq Int
+  createdAt  DateTime @default(now())
+
+  @@unique([couponId, customerId, customerSeq])
+  @@index([couponId, customerId])
+  @@map("coupon_redemptions")
 }

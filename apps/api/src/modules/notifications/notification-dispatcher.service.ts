@@ -10,6 +10,10 @@ export type NotificationKind =
   | 'order.status_changed'
   | 'payment.submitted'
   | 'payment.reviewed'
+  /** Money arrived on-chain that matched no order — staff must resolve it. */
+  | 'crypto.deposit_unmatched'
+  /** A customer's deposit window closed without a payment. */
+  | 'crypto.watch_expired'
   | 'delivery.completed'
   | 'delivery.failed'
   | 'inventory.low_stock'

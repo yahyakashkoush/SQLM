@@ -1,6 +1,8 @@
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
-import { Prisma, type PaymentMethod, type PaymentProvider } from '@prisma/client';
+import { ConflictException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import { Prisma, type CryptoDeposit, type PaymentMethod, type PaymentProvider } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { NotificationDispatcher } from '../notifications/notification-dispatcher.service';
 import { ExchangeRegistry } from './exchange/exchange-registry.service';
 import { CryptoMethodMisconfiguredError, AmountAllocationFailedError } from './errors/crypto-payment.errors';
 
@@ -14,6 +16,8 @@ const DELTA_STEP = new Prisma.Decimal('0.000001');
 const MAX_DELTA_UNITS = 9999;
 /** Fresh random candidate each time; the unique index settles real races. */
 const ALLOCATION_ATTEMPTS = 12;
+/** A customer may push their deadline out this many times, then no more. */
+const MAX_EXTENSIONS = 2;
 
 export function buildClaimKey(
   provider: PaymentProvider,
@@ -31,6 +35,8 @@ export class CryptoWatchService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly registry: ExchangeRegistry,
+    private readonly notifications: NotificationDispatcher,
+    private readonly config: ConfigService,
   ) {}
 
   /**
@@ -146,10 +152,96 @@ export class CryptoWatchService {
           note: 'Deposit window elapsed without a matching payment',
         },
       });
+
+      // The order keeps its status, so `transition()` — which is what
+      // normally messages the customer — never runs here. Without this the
+      // only record of the window closing is an event row nobody reads,
+      // and a customer who closed the Mini App learns nothing until they
+      // open it again, possibly after paying to a dead window.
+      await this.notifyExpired(watch.orderId);
     }
 
     if (expired > 0) this.logger.log(`Expired ${expired} crypto payment watch(es)`);
     return expired;
+  }
+
+  private async notifyExpired(orderId: string): Promise<void> {
+    const order = await this.prisma.order.findUnique({
+      where: { id: orderId },
+      select: { customerId: true, sequenceNumber: true },
+    });
+    if (!order) return;
+
+    const miniAppUrl = (this.config.get<string>('MINIAPP_URL') || 'http://localhost:3200').replace(
+      /\/$/,
+      '',
+    );
+    await this.notifications.notifyCustomer(order.customerId, {
+      kind: 'crypto.watch_expired',
+      orderId,
+      summary:
+        `⏰ انتهت مهلة الدفع لطلبك #${order.sequenceNumber}.\n` +
+        'لو لسه عايز المنتج، اعمل الطلب من تاني. ولو كنت حوّلت المبلغ بالفعل، ' +
+        'كلّم الدعم ومعاك رقم العملية وهنراجعه يدوياً.',
+      button: { text: '📦 عرض الطلب', url: `${miniAppUrl}/orders/${orderId}` },
+    });
+  }
+
+  /**
+   * Pushes a waiting deadline out by another full window.
+   *
+   * A customer who is mid-transfer when the countdown runs out would
+   * otherwise have to start a new order — and their in-flight payment
+   * would land on a closed window and strand. Extending keeps the same
+   * amount reserved, so money already sent still matches.
+   *
+   * Bounded: an abandoned page left open must not hold an amount out of
+   * the pool indefinitely.
+   */
+  async extendForOrder(orderId: string, customerId: string) {
+    const order = await this.prisma.order.findFirst({
+      where: { id: orderId, customerId },
+      include: { cryptoWatch: true, paymentMethod: true },
+    });
+    if (!order) throw new NotFoundException('Order not found');
+
+    const watch = order.cryptoWatch;
+    if (!watch) throw new NotFoundException('This order has no deposit window');
+    if (watch.status !== 'WAITING') {
+      throw new ConflictException('This deposit window is already closed');
+    }
+    if (watch.extensionsUsed >= MAX_EXTENSIONS) {
+      throw new ConflictException(
+        `A deposit window can be extended ${MAX_EXTENSIONS} times — please place a new order`,
+      );
+    }
+
+    const minutes = order.paymentMethod?.watchTtlMinutes ?? 30;
+    // From now rather than from the old deadline: extending a window that
+    // lapsed seconds ago should still give a full one.
+    const expiresAt = new Date(Date.now() + minutes * 60_000);
+
+    // Guarded on WAITING and on the extension count we just read, so two
+    // taps on the button cannot spend two extensions.
+    const claimed = await this.prisma.cryptoPaymentWatch.updateMany({
+      where: { id: watch.id, status: 'WAITING', extensionsUsed: watch.extensionsUsed },
+      data: { expiresAt, extensionsUsed: { increment: 1 } },
+    });
+    if (claimed.count === 0) {
+      throw new ConflictException('That window changed while you were extending it — reload');
+    }
+
+    await this.prisma.orderEvent.create({
+      data: {
+        orderId,
+        type: 'CRYPTO_WATCH_OPENED',
+        actorType: 'CUSTOMER',
+        actorCustomerId: customerId,
+        note: `Deposit window extended by ${minutes} minutes (${watch.extensionsUsed + 1}/${MAX_EXTENSIONS})`,
+      },
+    });
+
+    return this.findForOrder(orderId, customerId);
   }
 
   /**
@@ -183,6 +275,8 @@ export class CryptoWatchService {
       status: watch.status,
       expiresAt: watch.expiresAt,
       matchedAt: watch.matchedAt,
+      extensionsUsed: watch.extensionsUsed,
+      extensionsLeft: Math.max(0, MAX_EXTENSIONS - watch.extensionsUsed),
       /** False when the store has no key for this provider: nothing is
        *  actually watching, so the UI must not promise auto-confirmation. */
       autoConfirmActive: this.registry.isConfigured(watch.provider),
@@ -236,8 +330,12 @@ export class CryptoWatchService {
    * The deposit ledger. Rows with no order are deposits that matched no
    * watch — a customer who sent the wrong amount, or paid after their
    * window closed. They are the queue support actually works from.
+   *
+   * `suggestions` on an uncredited row is what turns that queue from a
+   * wall of hex into something actionable: the orders whose expected
+   * amount is within a hair of what arrived, nearest first.
    */
-  async listDepositsAdmin(onlyUnmatched = false) {
+  async listDepositsAdmin(onlyUnmatched = false, nearMisses?: NearMissLookup) {
     const deposits = await this.prisma.cryptoDeposit.findMany({
       where: onlyUnmatched ? { creditedAt: null } : undefined,
       orderBy: { seenAt: 'desc' },
@@ -253,21 +351,38 @@ export class CryptoWatchService {
       : [];
     const orderNumbers = new Map(orders.map((o) => [o.id, o.sequenceNumber]));
 
-    return deposits.map((deposit) => ({
-      id: deposit.id,
-      provider: deposit.provider,
-      txId: deposit.txId,
-      asset: deposit.asset,
-      network: deposit.network,
-      amount: deposit.amount.toString(),
-      address: deposit.address,
-      seenAt: deposit.seenAt,
-      creditedAt: deposit.creditedAt,
-      orderId: deposit.orderId,
-      orderNumber: deposit.orderId ? (orderNumbers.get(deposit.orderId) ?? null) : null,
-    }));
+    return Promise.all(
+      deposits.map(async (deposit) => ({
+        id: deposit.id,
+        provider: deposit.provider,
+        txId: deposit.txId,
+        asset: deposit.asset,
+        network: deposit.network,
+        amount: deposit.amount.toString(),
+        address: deposit.address,
+        seenAt: deposit.seenAt,
+        creditedAt: deposit.creditedAt,
+        alertedAt: deposit.alertedAt,
+        orderId: deposit.orderId,
+        orderNumber: deposit.orderId ? (orderNumbers.get(deposit.orderId) ?? null) : null,
+        matchedByStaffId: deposit.matchedByStaffId,
+        // Only worth computing for money still looking for a home.
+        suggestions: deposit.creditedAt || !nearMisses ? [] : await nearMisses(deposit),
+      })),
+    );
   }
 }
+
+/** Injected rather than imported, to keep this service free of the poller. */
+export type NearMissLookup = (deposit: CryptoDeposit) => Promise<
+  Array<{
+    watchId: string;
+    orderId: string;
+    orderNumber: number;
+    expectedAmount: string;
+    difference: string;
+  }>
+>;
 
 function isUniqueViolation(error: unknown): error is Prisma.PrismaClientKnownRequestError {
   return error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002';

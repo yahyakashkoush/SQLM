@@ -18,3 +18,19 @@ export class PaymentMethodUnavailableError extends DomainError {
     this.name = 'PaymentMethodUnavailableError';
   }
 }
+
+/**
+ * Raised when a customer tries to cancel an order that has moved past the
+ * point where walking away is their decision alone — a payment proof is in,
+ * or the order is already paid.
+ */
+export class OrderNotCancellableError extends DomainError {
+  readonly httpStatus = HttpStatus.CONFLICT;
+
+  constructor(public readonly status: string) {
+    super(
+      `An order in ${status} can no longer be cancelled from the app — contact support instead`,
+    );
+    this.name = 'OrderNotCancellableError';
+  }
+}

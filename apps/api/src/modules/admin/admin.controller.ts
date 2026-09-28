@@ -30,6 +30,14 @@ export class AdminController {
     return this.admin.stats();
   }
 
+  /** Revenue over a window with the previous one alongside, so the number
+   *  on the dashboard answers "better or worse" and not just "how much". */
+  @Get('revenue')
+  @Permissions('analytics.read')
+  revenue(@Query('days') days?: string) {
+    return this.admin.revenueReport(days ? Number(days) : 30);
+  }
+
   @Get('customers')
   @Permissions('customers.read')
   listCustomers(@Query() query: CustomerQueryDto) {

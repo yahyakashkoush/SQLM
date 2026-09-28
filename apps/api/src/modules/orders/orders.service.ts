@@ -8,8 +8,14 @@ import { NotificationDispatcher } from '../notifications/notification-dispatcher
 import { InventoryService } from '../inventory/inventory.service';
 import { InsufficientInventoryError } from '../inventory/errors/insufficient-inventory.error';
 import { assertTransitionAllowed, InvalidOrderTransitionError } from './order-state-machine';
-import { ProductNotPurchasableError, PaymentMethodUnavailableError } from './errors/order.errors';
+import {
+  ProductNotPurchasableError,
+  PaymentMethodUnavailableError,
+  OrderNotCancellableError,
+} from './errors/order.errors';
 import { CryptoWatchService } from '../crypto-payments/crypto-watch.service';
+import { CouponsService } from '../coupons/coupons.service';
+import { CartPricingService } from './cart-pricing.service';
 import type { CheckoutDto } from './dto/checkout.dto';
 import type { OrderQueryDto } from './dto/order-query.dto';
 
@@ -22,6 +28,14 @@ export interface OrderActor {
 }
 
 const ORDER_UNIQUE_CONSTRAINT_VIOLATION = 'P2002';
+
+/**
+ * Where a customer may still cancel on their own. The state machine also
+ * allows CANCELLED out of PAYMENT_SUBMITTED and PAYMENT_REVIEW, but by
+ * then a transfer may be in flight and staff may be mid-approval, so those
+ * two stay a support decision.
+ */
+const CUSTOMER_CANCELLABLE_STATUSES: readonly OrderStatus[] = ['CREATED', 'PENDING_PAYMENT'];
 
 type OrderWithItems = Prisma.OrderGetPayload<{ include: { items: true } }>;
 
@@ -36,6 +50,8 @@ export class OrdersService {
     private readonly settings: SettingsService,
     private readonly config: ConfigService,
     private readonly cryptoWatch: CryptoWatchService,
+    private readonly pricing: CartPricingService,
+    private readonly coupons: CouponsService,
   ) {}
 
   /**
@@ -63,36 +79,39 @@ export class OrdersService {
       throw new PaymentMethodUnavailableError(dto.paymentMethodId);
     }
 
-    const productIds = [...new Set(dto.items.map((i) => i.productId))];
-    const products = await this.prisma.product.findMany({ where: { id: { in: productIds } } });
-    const productById = new Map(products.map((p) => [p.id, p]));
+    const { currency, subtotal, productById } = await this.pricing.priceCart(dto.items);
 
-    let currency: string | undefined;
-    let subtotal = new Prisma.Decimal(0);
-    for (const item of dto.items) {
-      const product = productById.get(item.productId);
-      if (!product || product.status !== 'ACTIVE' || product.visibility !== 'VISIBLE') {
-        throw new ProductNotPurchasableError(item.productId);
-      }
-      if (currency && currency !== product.currency) {
-        throw new ProductNotPurchasableError(item.productId);
-      }
-      currency = product.currency;
-      subtotal = subtotal.add(product.price.mul(item.quantity));
-    }
+    // Priced before the transaction opens, against the same cart the quote
+    // endpoint prices, so the customer is charged the total they were
+    // shown. The redemption itself happens inside the transaction below.
+    const couponQuote = dto.couponCode
+      ? await this.coupons.quote(dto.couponCode, customerId, subtotal)
+      : null;
+    const discountTotal = couponQuote?.discount ?? new Prisma.Decimal(0);
+    const total = subtotal.sub(discountTotal);
 
     try {
       const order = await this.prisma.$transaction(async (tx) => {
         const created = await tx.order.create({
           data: {
             customerId,
-            currency: currency!,
+            currency,
             subtotal,
-            total: subtotal,
+            discountTotal,
+            total,
+            couponId: couponQuote?.couponId,
+            couponCode: couponQuote?.code,
             paymentMethodId: dto.paymentMethodId,
             idempotencyKey: dto.idempotencyKey,
           },
         });
+
+        if (couponQuote) {
+          // Inside the transaction: if anything below fails — out of
+          // stock, a lost idempotency race — the redemption rolls back
+          // with the order and the code is not burned.
+          await this.coupons.redeem(tx, couponQuote, customerId, created.id);
+        }
 
         for (const item of dto.items) {
           const product = productById.get(item.productId)!;
@@ -326,6 +345,45 @@ export class OrdersService {
     });
     if (!order) throw new NotFoundException('Order not found');
     return order;
+  }
+
+  /**
+   * Lets a customer walk away from an order they have not paid for.
+   *
+   * Worth having for the inventory alone: a reserved item is unavailable
+   * to everyone else until the order is cancelled, so without this a
+   * customer who picked the wrong product silently holds stock until
+   * their window lapses or someone notices. `transition()` releases the
+   * reservation and messages them, so this only has to decide whether
+   * they are allowed.
+   *
+   * Deliberately narrower than what the state machine permits. Once a
+   * proof is uploaded or a review is underway, money may already have
+   * moved and a self-cancel would race staff approving it — those go
+   * through support.
+   */
+  async cancelByCustomer(orderId: string, customerId: string, reason?: string): Promise<Order> {
+    const order = await this.prisma.order.findFirst({
+      where: { id: orderId, customerId },
+      select: { id: true, status: true },
+    });
+    if (!order) throw new NotFoundException('Order not found');
+
+    if (!CUSTOMER_CANCELLABLE_STATUSES.includes(order.status as OrderStatus)) {
+      throw new OrderNotCancellableError(order.status as OrderStatus);
+    }
+
+    // Before the transition: releasing the claimed amount back to the pool
+    // is safe to repeat, and leaving it claimed would be worse than
+    // cancelling twice.
+    await this.cryptoWatch.cancelForOrder(orderId);
+
+    return this.transitionStandalone(
+      orderId,
+      'CANCELLED',
+      { type: 'CUSTOMER', customerId },
+      reason?.trim() || 'ألغاه العميل',
+    );
   }
 
   async listForCustomer(

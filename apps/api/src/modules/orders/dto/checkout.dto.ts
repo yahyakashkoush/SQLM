@@ -4,6 +4,8 @@ import {
   ArrayMinSize,
   IsArray,
   IsInt,
+  IsOptional,
+  IsString,
   IsUUID,
   Max,
   MaxLength,
@@ -38,4 +40,11 @@ export class CheckoutDto {
   @MinLength(8)
   @MaxLength(128)
   idempotencyKey!: string;
+
+  /** Re-validated and re-priced server-side; the quote the customer saw is
+   *  never trusted, only the code they typed. */
+  @IsOptional()
+  @IsString()
+  @MaxLength(32)
+  couponCode?: string;
 }

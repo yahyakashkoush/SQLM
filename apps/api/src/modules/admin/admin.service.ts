@@ -1,7 +1,7 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import * as argon2 from 'argon2';
-import type { Role } from '@sqlm/shared';
+import type { OrderStatus, Role } from '@sqlm/shared';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
 import { SettingsService } from '../settings/settings.service';
@@ -13,6 +13,19 @@ import type {
   UpdateStaffDto,
 } from './dto/admin.dto';
 
+/**
+ * Statuses whose money is really the store's. PAID is the earliest point a
+ * payment is confirmed; REFUNDED and CANCELLED are deliberately absent, so
+ * a refund removes an order from revenue instead of inflating it forever.
+ */
+const REVENUE_STATUSES: OrderStatus[] = [
+  'PAID',
+  'PROCESSING',
+  'READY_FOR_DELIVERY',
+  'DELIVERED',
+  'COMPLETED',
+];
+
 /** Operational read/write surface the dashboard needs that no domain module owns. */
 @Injectable()
 export class AdminService {
@@ -21,6 +34,98 @@ export class AdminService {
     private readonly audit: AuditService,
     private readonly settings: SettingsService,
   ) {}
+
+  /**
+   * Revenue over a window, plus the same window a period earlier.
+   *
+   * A single all-time total — which is all `stats()` had — cannot answer
+   * the only question an operator actually asks: is the store doing better
+   * than it was? Returning the previous period alongside makes the number
+   * comparable without the dashboard having to make a second call and do
+   * date arithmetic of its own.
+   */
+  async revenueReport(days = 30) {
+    const bounded = Math.min(Math.max(Math.trunc(days), 1), 365);
+    const now = new Date();
+    const windowMs = bounded * 24 * 60 * 60 * 1000;
+    const from = new Date(now.getTime() - windowMs);
+    const previousFrom = new Date(from.getTime() - windowMs);
+
+    // `paidAt` rather than `createdAt`: an order that was placed last month
+    // and paid today is this period's money.
+    const paid: Prisma.OrderWhereInput = { status: { in: REVENUE_STATUSES } };
+
+    const [current, previous, byDay, topProducts] = await this.prisma.$transaction([
+      this.prisma.order.aggregate({
+        _sum: { total: true, discountTotal: true },
+        _count: true,
+        where: { ...paid, paidAt: { gte: from, lte: now } },
+      }),
+      this.prisma.order.aggregate({
+        _sum: { total: true },
+        _count: true,
+        where: { ...paid, paidAt: { gte: previousFrom, lt: from } },
+      }),
+      this.prisma.$queryRaw<Array<{ day: Date; revenue: Prisma.Decimal; orders: bigint }>>`
+        SELECT date_trunc('day', "paidAt") AS day,
+               SUM("total")                AS revenue,
+               COUNT(*)                    AS orders
+          FROM "orders"
+         WHERE "paidAt" >= ${from}
+           AND "paidAt" <= ${now}
+           AND "status" = ANY(${REVENUE_STATUSES}::"OrderStatus"[])
+         GROUP BY 1
+         ORDER BY 1
+      `,
+      this.prisma.$queryRaw<
+        Array<{ productId: string; name: string; units: bigint; revenue: Prisma.Decimal }>
+      >`
+        SELECT oi."productId",
+               oi."productNameSnapshot" AS name,
+               SUM(oi."quantity")                     AS units,
+               SUM(oi."unitPrice" * oi."quantity")    AS revenue
+          FROM "order_items" oi
+          JOIN "orders" o ON o."id" = oi."orderId"
+         WHERE o."paidAt" >= ${from}
+           AND o."paidAt" <= ${now}
+           AND o."status" = ANY(${REVENUE_STATUSES}::"OrderStatus"[])
+         GROUP BY 1, 2
+         ORDER BY revenue DESC
+         LIMIT 5
+      `,
+    ]);
+
+    const revenue = current._sum.total ?? new Prisma.Decimal(0);
+    const previousRevenue = previous._sum.total ?? new Prisma.Decimal(0);
+
+    return {
+      days: bounded,
+      from,
+      to: now,
+      revenue: revenue.toString(),
+      orders: current._count,
+      discountsGiven: (current._sum.discountTotal ?? new Prisma.Decimal(0)).toString(),
+      averageOrderValue:
+        current._count > 0 ? revenue.div(current._count).toDecimalPlaces(2).toString() : '0',
+      previous: { revenue: previousRevenue.toString(), orders: previous._count },
+      /** Null when there is nothing to compare against, rather than a
+       *  meaningless +100% out of a zero baseline. */
+      changePercent: previousRevenue.isZero()
+        ? null
+        : revenue.sub(previousRevenue).div(previousRevenue).mul(100).toDecimalPlaces(1).toNumber(),
+      byDay: byDay.map((row) => ({
+        day: row.day,
+        revenue: row.revenue.toString(),
+        orders: Number(row.orders),
+      })),
+      topProducts: topProducts.map((row) => ({
+        productId: row.productId,
+        name: row.name,
+        units: Number(row.units),
+        revenue: row.revenue.toString(),
+      })),
+    };
+  }
 
   /** Single round-trip for the dashboard landing page. */
   async stats() {
@@ -42,7 +147,7 @@ export class AdminService {
       this.prisma.product.count({ where: { status: 'ACTIVE', inventoryMode: 'QUANTITY', stock: { lte: 3 } } }),
       this.prisma.order.aggregate({
         _sum: { total: true },
-        where: { status: { in: ['PAID', 'PROCESSING', 'READY_FOR_DELIVERY', 'DELIVERED', 'COMPLETED'] } },
+        where: { status: { in: REVENUE_STATUSES } },
       }),
       this.prisma.customer.count(),
     ]);

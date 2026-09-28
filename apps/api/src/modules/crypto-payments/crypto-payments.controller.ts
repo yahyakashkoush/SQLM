@@ -1,4 +1,4 @@
-import { Controller, Get, Param, UseGuards } from '@nestjs/common';
+import { Controller, Get, Param, Post, UseGuards } from '@nestjs/common';
 import { CryptoWatchService } from './crypto-watch.service';
 import { JwtCustomerAuthGuard } from '../rbac/guards/jwt-customer-auth.guard';
 import {
@@ -16,5 +16,17 @@ export class CryptoPaymentsController {
   @Get()
   get(@Param('orderId') orderId: string, @CurrentCustomer() customer: AuthenticatedCustomer) {
     return this.watches.findForOrder(orderId, customer.id);
+  }
+
+  /**
+   * Gives the customer another full window.
+   *
+   * Cheaper for everyone than making them re-order: the amount stays
+   * reserved, so a transfer already in flight still settles instead of
+   * landing on a closed window and needing support.
+   */
+  @Post('extend')
+  extend(@Param('orderId') orderId: string, @CurrentCustomer() customer: AuthenticatedCustomer) {
+    return this.watches.extendForOrder(orderId, customer.id);
   }
 }

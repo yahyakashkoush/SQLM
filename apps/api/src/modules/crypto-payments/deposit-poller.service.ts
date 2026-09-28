@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { ConflictException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Prisma, type CryptoDeposit } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
@@ -13,7 +13,33 @@ export interface PollSummary {
   ingested: number;
   settled: number;
   expired: number;
+  alerted: number;
   errors: string[];
+}
+
+/**
+ * How long a deposit may sit unmatched before staff are told. Long enough
+ * that a payment arriving a few seconds before its watch opens settles on
+ * its own and never alerts; short enough that a customer who mistyped the
+ * amount is not waiting on someone noticing.
+ */
+const STRANDED_AFTER_MS = 10 * 60_000;
+
+/**
+ * How far an amount may be off and still be offered as the same customer.
+ * A deposit is a near miss when it is within this fraction of what a watch
+ * expects — a mistyped last digit or a network fee shaved off the top, not
+ * a different order that happens to cost roughly the same.
+ */
+const NEAR_MISS_TOLERANCE = 0.01;
+
+export interface NearMiss {
+  watchId: string;
+  orderId: string;
+  orderNumber: number;
+  expectedAmount: string;
+  /** Signed: positive when the customer sent more than asked. */
+  difference: string;
 }
 
 /**
@@ -43,7 +69,7 @@ export class DepositPollerService {
   }
 
   async pollOnce(): Promise<PollSummary> {
-    const summary: PollSummary = { ingested: 0, settled: 0, expired: 0, errors: [] };
+    const summary: PollSummary = { ingested: 0, settled: 0, expired: 0, alerted: 0, errors: [] };
 
     for (const client of this.registry.configured()) {
       try {
@@ -61,7 +87,99 @@ export class DepositPollerService {
 
     summary.settled = await this.settlePending();
     summary.expired = await this.watches.expireStale();
+    // After settling, so a deposit that just paid an order is never
+    // reported as stranded.
+    summary.alerted = await this.alertStranded();
     return summary;
+  }
+
+  /**
+   * Tells staff about money that arrived and paid for nothing.
+   *
+   * Without this the ledger is a queue nobody is watching: a customer who
+   * sends the wrong amount, or pays after their window closed, has really
+   * transferred funds, and the only symptom is an order that stays unpaid
+   * until they complain. Each deposit alerts once — `alertedAt` is what
+   * stops the 40-second sweep repeating it forever.
+   */
+  private async alertStranded(): Promise<number> {
+    const cutoff = new Date(Date.now() - STRANDED_AFTER_MS);
+    const stranded = await this.prisma.cryptoDeposit.findMany({
+      where: { creditedAt: null, alertedAt: null, seenAt: { lt: cutoff } },
+      orderBy: { seenAt: 'asc' },
+      take: 50,
+    });
+    if (stranded.length === 0) return 0;
+
+    let alerted = 0;
+    for (const deposit of stranded) {
+      // Claim before notifying: if the notification throws, the row still
+      // counts as alerted rather than re-alerting on every later sweep.
+      const claim = await this.prisma.cryptoDeposit.updateMany({
+        where: { id: deposit.id, alertedAt: null, creditedAt: null },
+        data: { alertedAt: new Date() },
+      });
+      if (claim.count === 0) continue;
+      alerted += 1;
+
+      const [closest] = await this.findNearMisses(deposit);
+      const suggestion = closest
+        ? ` Closest order: #${closest.orderNumber} expecting ${closest.expectedAmount} (off by ${closest.difference}).`
+        : ' No order is close to this amount.';
+
+      await this.notifications.notifyStaff({
+        kind: 'crypto.deposit_unmatched',
+        summary:
+          `⚠️ ${deposit.amount.toString()} ${deposit.asset} arrived on ${deposit.network} ` +
+          `and matched no order.${suggestion}`,
+        body: `tx ${deposit.txId} (${deposit.provider})`,
+      });
+
+      this.logger.warn(
+        `Unmatched deposit ${deposit.provider}:${deposit.txId} — ${deposit.amount.toString()} ${deposit.asset}`,
+      );
+    }
+
+    return alerted;
+  }
+
+  /**
+   * Watches whose expected amount is within tolerance of what actually
+   * arrived, nearest first.
+   *
+   * EXPIRED watches are included deliberately: the customer who paid late
+   * is the single most common stranded deposit, and their watch is by
+   * definition no longer WAITING. Nothing here credits anything — it only
+   * gives whoever reads the alert a name to check.
+   */
+  async findNearMisses(deposit: CryptoDeposit): Promise<NearMiss[]> {
+    const amount = deposit.amount;
+    const tolerance = amount.mul(NEAR_MISS_TOLERANCE);
+
+    const candidates = await this.prisma.cryptoPaymentWatch.findMany({
+      where: {
+        provider: deposit.provider,
+        asset: deposit.asset,
+        network: deposit.network,
+        status: { in: ['WAITING', 'EXPIRED'] },
+        expectedAmount: { gte: amount.sub(tolerance), lte: amount.add(tolerance) },
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 20,
+      include: { order: { select: { sequenceNumber: true, status: true } } },
+    });
+
+    return candidates
+      .map((watch) => ({
+        watchId: watch.id,
+        orderId: watch.orderId,
+        orderNumber: watch.order.sequenceNumber,
+        expectedAmount: watch.expectedAmount.toString(),
+        difference: amount.sub(watch.expectedAmount).toString(),
+        distance: amount.sub(watch.expectedAmount).abs(),
+      }))
+      .sort((a, b) => a.distance.comparedTo(b.distance))
+      .map(({ distance: _distance, ...rest }) => rest);
   }
 
   /**
@@ -133,32 +251,126 @@ export class DepositPollerService {
     });
     if (!watch) return false;
 
-    const orderId = watch.orderId;
+    const credited = await this.credit(deposit, {
+      orderId: watch.orderId,
+      watchId: watch.id,
+      requireWatchWaiting: true,
+      note: `${deposit.amount.toString()} ${deposit.asset} on ${deposit.network} — tx ${deposit.txId}`,
+    });
+    if (!credited) return false;
+
+    await this.notifications.notifyStaff({
+      kind: 'payment.reviewed',
+      orderId: watch.orderId,
+      summary: `Crypto payment auto-confirmed for order ${watch.orderId} (${deposit.amount.toString()} ${deposit.asset})`,
+    });
+    this.logger.log(
+      `Auto-confirmed order ${watch.orderId} from ${deposit.provider} deposit ${deposit.txId}`,
+    );
+    return true;
+  }
+
+  /**
+   * Credits a deposit against an order the operator picked, for money the
+   * matcher could never claim on its own — a wrong amount, or a payment
+   * that landed after the window closed.
+   *
+   * Deliberately the same `credit` path the automatic matcher uses, so a
+   * hand-resolved payment reaches PAID through the same state machine,
+   * dispatches delivery the same way, and leaves the same order history.
+   * The only difference is who is recorded as having done it.
+   */
+  async matchManually(depositId: string, orderId: string, staffId: string): Promise<void> {
+    const deposit = await this.prisma.cryptoDeposit.findUnique({ where: { id: depositId } });
+    if (!deposit) throw new NotFoundException('Deposit not found');
+    if (deposit.creditedAt) {
+      throw new ConflictException('That deposit has already been credited');
+    }
+
+    const order = await this.prisma.order.findUnique({
+      where: { id: orderId },
+      include: { cryptoWatch: true },
+    });
+    if (!order) throw new NotFoundException('Order not found');
+    if (!CREDITABLE_ORDER_STATUSES.includes(order.status)) {
+      throw new ConflictException(
+        `Order is ${order.status} — only an order still awaiting payment can be credited`,
+      );
+    }
+
+    const credited = await this.credit(deposit, {
+      orderId,
+      watchId: order.cryptoWatch?.id ?? null,
+      // The watch is typically EXPIRED here; that is the whole point.
+      requireWatchWaiting: false,
+      note:
+        `Matched by hand: ${deposit.amount.toString()} ${deposit.asset} on ${deposit.network} ` +
+        `— tx ${deposit.txId}`,
+      staffId,
+    });
+    if (!credited) {
+      throw new ConflictException('That deposit was credited by someone else just now');
+    }
+
+    await this.notifications.notifyStaff({
+      kind: 'payment.reviewed',
+      orderId,
+      summary: `Crypto deposit matched by hand to order ${orderId} (${deposit.amount.toString()} ${deposit.asset})`,
+    });
+    this.logger.log(`Deposit ${deposit.provider}:${deposit.txId} matched to order ${orderId} by staff ${staffId}`);
+  }
+
+  /**
+   * The one place a deposit turns into a paid order.
+   *
+   * Claims the deposit row first: two workers racing on it leave exactly
+   * one with count 1, so a transaction id can never pay for two orders.
+   */
+  private async credit(
+    deposit: CryptoDeposit,
+    opts: {
+      orderId: string;
+      watchId: string | null;
+      requireWatchWaiting: boolean;
+      note: string;
+      staffId?: string;
+    },
+  ): Promise<boolean> {
+    const { orderId, watchId, requireWatchWaiting, note, staffId } = opts;
 
     const claimed = await this.prisma.$transaction(async (tx) => {
-      // Claim the deposit first. Two workers racing on the same row leave
-      // exactly one with count 1, so an order can never be paid twice by
-      // one transaction id.
       const depositClaim = await tx.cryptoDeposit.updateMany({
         where: { id: deposit.id, creditedAt: null },
-        data: { creditedAt: new Date(), watchId: watch.id, orderId },
+        data: {
+          creditedAt: new Date(),
+          watchId,
+          orderId,
+          ...(staffId ? { matchedByStaffId: staffId } : {}),
+        },
       });
       if (depositClaim.count === 0) return false;
 
-      // And the watch, so two different deposits of the same amount can't
-      // both settle the one order — the second finds it no longer WAITING.
-      const watchClaim = await tx.cryptoPaymentWatch.updateMany({
-        where: { id: watch.id, status: 'WAITING' },
-        data: { status: 'MATCHED', matchedAt: new Date(), claimKey: null },
-      });
-      if (watchClaim.count === 0) return false;
+      if (watchId) {
+        // Guarding on WAITING is what stops two deposits of the same
+        // amount both settling one order; a hand-matched deposit has
+        // nothing to race with, so it may claim an expired watch too.
+        const watchClaim = await tx.cryptoPaymentWatch.updateMany({
+          where: {
+            id: watchId,
+            ...(requireWatchWaiting ? { status: 'WAITING' } : { status: { not: 'MATCHED' } }),
+          },
+          data: { status: 'MATCHED', matchedAt: new Date(), claimKey: null },
+        });
+        if (watchClaim.count === 0) return false;
+      }
 
       await tx.orderEvent.create({
         data: {
           orderId,
           type: 'CRYPTO_PAYMENT_DETECTED',
-          actorType: 'SYSTEM',
-          note: `${deposit.amount.toString()} ${deposit.asset} on ${deposit.network} — tx ${deposit.txId}`,
+          actorType: staffId ? 'STAFF' : 'SYSTEM',
+          actorStaffId: staffId,
+          note,
         },
       });
 
@@ -167,9 +379,19 @@ export class DepositPollerService {
       // amount is both the proof and its verification, but reusing the
       // path keeps one state machine for both and leaves the order's
       // history readable next to a manually reviewed one.
-      await this.orders.transition(tx, orderId, 'PAYMENT_SUBMITTED', { type: 'SYSTEM' });
-      await this.orders.transition(tx, orderId, 'PAYMENT_REVIEW', { type: 'SYSTEM' });
-      await this.orders.transition(tx, orderId, 'PAID', { type: 'SYSTEM' });
+      const actor = staffId ? ({ type: 'STAFF', staffId } as const) : ({ type: 'SYSTEM' } as const);
+      const order = await tx.order.findUniqueOrThrow({ where: { id: orderId } });
+      if (order.status === 'PENDING_PAYMENT' || order.status === 'CREATED') {
+        if (order.status === 'CREATED') {
+          await this.orders.transition(tx, orderId, 'PENDING_PAYMENT', actor);
+        }
+        await this.orders.transition(tx, orderId, 'PAYMENT_SUBMITTED', actor);
+      }
+      const afterSubmit = await tx.order.findUniqueOrThrow({ where: { id: orderId } });
+      if (afterSubmit.status === 'PAYMENT_SUBMITTED') {
+        await this.orders.transition(tx, orderId, 'PAYMENT_REVIEW', actor);
+      }
+      await this.orders.transition(tx, orderId, 'PAID', actor);
 
       return true;
     });
@@ -179,15 +401,17 @@ export class DepositPollerService {
     // After commit only: the delivery worker reads the order itself and
     // has to see the committed PAID row.
     await this.delivery.dispatch(orderId);
-    await this.notifications.notifyStaff({
-      kind: 'payment.reviewed',
-      orderId,
-      summary: `Crypto payment auto-confirmed for order ${orderId} (${deposit.amount.toString()} ${deposit.asset})`,
-    });
-
-    this.logger.log(
-      `Auto-confirmed order ${orderId} from ${deposit.provider} deposit ${deposit.txId}`,
-    );
     return true;
   }
 }
+
+/**
+ * Statuses a deposit may still be credited against. Past PAID the order
+ * already has its money, and crediting again would double-deliver.
+ */
+const CREDITABLE_ORDER_STATUSES: string[] = [
+  'CREATED',
+  'PENDING_PAYMENT',
+  'PAYMENT_SUBMITTED',
+  'PAYMENT_REVIEW',
+];

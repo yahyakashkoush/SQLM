@@ -23,9 +23,10 @@ export class DepositPollerProcessor extends WorkerHost {
     }
 
     const summary = await this.poller.pollOnce();
-    if (summary.ingested > 0 || summary.settled > 0 || summary.expired > 0) {
+    if (summary.ingested > 0 || summary.settled > 0 || summary.expired > 0 || summary.alerted > 0) {
       this.logger.log(
-        `Deposit sweep: ${summary.ingested} new, ${summary.settled} settled, ${summary.expired} expired`,
+        `Deposit sweep: ${summary.ingested} new, ${summary.settled} settled, ` +
+          `${summary.expired} expired, ${summary.alerted} stranded`,
       );
     }
   }
