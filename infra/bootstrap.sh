@@ -17,7 +17,6 @@ COMPOSE=(sudo docker compose -f "$DIR/docker-compose.prod.yml" --project-directo
 say() { printf '\n\033[1;36m>>> %s\033[0m\n' "$*"; }
 warn() { printf '\033[1;33m!!! %s\033[0m\n' "$*"; }
 ask() { local v; read -r -p "$1" v </dev/tty; printf '%s' "$v"; }
-ask_secret() { local v; read -r -s -p "$1" v </dev/tty; echo >/dev/tty; printf '%s' "$v"; }
 rand_hex() { openssl rand -hex "$1"; }
 
 # --- 1. System packages -------------------------------------------------------
@@ -69,14 +68,16 @@ else
   while [ -z "$BOT_TOKEN" ]; do BOT_TOKEN=$(ask "Telegram bot token (from @BotFather): "); done
   ACME=$(ask "Email for SSL certificates [yahyaemad999@gmail.com]: "); ACME=${ACME:-yahyaemad999@gmail.com}
   OWNER_EMAIL=$(ask "Admin dashboard login email [$ACME]: "); OWNER_EMAIL=${OWNER_EMAIL:-$ACME}
-  while [ ${#OWNER_PASSWORD} -lt 10 ]; do
-    OWNER_PASSWORD=$(ask_secret "Admin dashboard password (10+ characters): ")
+  while :; do
+    OWNER_PASSWORD=$(ask "Admin dashboard password (10+ characters): ")
+    [ ${#OWNER_PASSWORD} -ge 10 ] && break
+    warn "That was ${#OWNER_PASSWORD} characters — use at least 10."
   done
   echo "Crypto auto-confirm keys (read-only). Press Enter to skip any of them."
   BINANCE_KEY=$(ask "  Binance API key: ")
-  BINANCE_SECRET=$( [ -n "$BINANCE_KEY" ] && ask_secret "  Binance API secret: " || true)
+  BINANCE_SECRET=$( [ -n "$BINANCE_KEY" ] && ask "  Binance API secret: " || true)
   BYBIT_KEY=$(ask "  Bybit API key: ")
-  BYBIT_SECRET=$( [ -n "$BYBIT_KEY" ] && ask_secret "  Bybit API secret: " || true)
+  BYBIT_SECRET=$( [ -n "$BYBIT_KEY" ] && ask "  Bybit API secret: " || true)
 
   DB_PASS=$(rand_hex 24)
   WEBHOOK_SECRET=$(rand_hex 24)
