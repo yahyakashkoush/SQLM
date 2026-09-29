@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import type { Prisma } from '@prisma/client';
-import { SETTING_DEFAULTS, SETTING_DEFINITIONS } from '@sqlm/shared';
+import { SETTING_DEFAULTS, SETTING_DEFINITIONS, renderTemplate } from '@sqlm/shared';
 import { PrismaService } from '../prisma/prisma.service';
 
 /**
@@ -60,11 +60,16 @@ export class SettingsService {
   }
 
   /** Values commonly substituted into customer-facing templates. */
-  async storeValues(db?: Db): Promise<{ store_name: string; support_contact: string }> {
-    return {
+  async storeValues(
+    db?: Db,
+  ): Promise<{ store_name: string; support_contact: string; delivery_time: string; proof_warning: string }> {
+    const base = {
       store_name: await this.getString('store.name', db),
       support_contact: await this.getString('store.supportContact', db),
+      delivery_time: await this.getString('store.deliveryTime', db),
     };
+    // Itself a template over the other store values, so it can mention the support contact.
+    return { ...base, proof_warning: renderTemplate(await this.getString('orders.proofWarning', db), base) };
   }
 
   /** Definitions merged with current values, for the admin Settings page. */

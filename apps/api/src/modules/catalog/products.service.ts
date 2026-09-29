@@ -157,6 +157,28 @@ export class ProductsService {
     }
   }
 
+  /**
+   * Hard delete, for test products and mistakes. Refused while any order
+   * still references the product — the order history would lose what was
+   * sold — so the owner deletes those test orders first, or archives.
+   * Its inventory goes with it: unsold stock of a product that no longer
+   * exists is stock nobody can ever sell.
+   */
+  async deletePermanently(id: string): Promise<{ id: string; deletedInventory: number }> {
+    await this.findByIdAdmin(id);
+    const orderLines = await this.prisma.orderItem.count({ where: { productId: id } });
+    if (orderLines > 0) {
+      throw new ConflictException(
+        `This product appears in ${orderLines} order line(s). Delete those orders first, or archive the product instead.`,
+      );
+    }
+    return this.prisma.$transaction(async (tx) => {
+      const inventory = await tx.inventoryItem.deleteMany({ where: { productId: id } });
+      await tx.product.delete({ where: { id } });
+      return { id, deletedInventory: inventory.count };
+    });
+  }
+
   /** Products are never hard-deleted once they can be referenced by orders/inventory — archive instead. */
   async archive(id: string): Promise<Product> {
     await this.findByIdAdmin(id);

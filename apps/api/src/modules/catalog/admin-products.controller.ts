@@ -9,6 +9,8 @@ import { PermissionsGuard } from '../rbac/guards/permissions.guard';
 import { Permissions } from '../rbac/decorators/permissions.decorator';
 import { NotificationDispatcher } from '../notifications/notification-dispatcher.service';
 import type { Product } from '@prisma/client';
+import { CurrentStaff, type AuthenticatedStaff } from '../rbac/decorators/current-staff.decorator';
+import { AuditService } from '../audit/audit.service';
 
 @Controller('admin/products')
 @UseGuards(JwtStaffAuthGuard, PermissionsGuard)
@@ -17,6 +19,7 @@ export class AdminProductsController {
     private readonly products: ProductsService,
     private readonly notifications: NotificationDispatcher,
     private readonly config: ConfigService,
+    private readonly audit: AuditService,
   ) {}
 
   @Get()
@@ -51,6 +54,21 @@ export class AdminProductsController {
   @Permissions('products.write')
   archive(@Param('id') id: string) {
     return this.products.archive(id);
+  }
+
+  /** Gone for good, with its inventory. Only for products no order references. */
+  @Delete(':id/permanent')
+  @Permissions('products.delete')
+  async deletePermanently(@Param('id') id: string, @CurrentStaff() staff: AuthenticatedStaff) {
+    const result = await this.products.deletePermanently(id);
+    await this.audit.log({
+      actorStaffId: staff.id,
+      action: 'product.deleted',
+      entityType: 'product',
+      entityId: id,
+      changes: { deletedInventory: result.deletedInventory },
+    });
+    return result;
   }
 
   private async announce(product: Product): Promise<number> {

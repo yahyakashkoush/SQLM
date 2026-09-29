@@ -9,6 +9,14 @@
 # scale independently (`--scale api=3 --scale worker=2`).
 name: sqlm
 
+# Every container's stdout goes to a size-capped file: without a cap a
+# chatty or looping service fills the disk and takes the database with it.
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: '10m'
+    max-file: '3'
+
 x-api-env: &api-env
   NODE_ENV: production
   DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}
@@ -52,6 +60,7 @@ x-api-env: &api-env
 
 services:
   postgres:
+    logging: *logging
     image: postgres:16-alpine
     restart: unless-stopped
     environment:
@@ -67,6 +76,7 @@ services:
       retries: 10
 
   redis:
+    logging: *logging
     image: redis:7-alpine
     restart: unless-stopped
     command: >-
@@ -87,6 +97,7 @@ services:
   # complete, so no app container ever serves traffic against a schema
   # that hasn't been migrated.
   migrate:
+    logging: *logging
     build:
       context: .
       dockerfile: apps/api/Dockerfile
@@ -98,6 +109,7 @@ services:
     restart: 'no'
 
   api:
+    logging: *logging
     build:
       context: .
       dockerfile: apps/api/Dockerfile
@@ -114,6 +126,7 @@ services:
         condition: service_healthy
 
   worker:
+    logging: *logging
     build:
       context: .
       dockerfile: apps/api/Dockerfile
@@ -133,6 +146,7 @@ services:
       disable: true
 
   miniapp:
+    logging: *logging
     build:
       context: .
       dockerfile: apps/miniapp/Dockerfile
@@ -145,6 +159,7 @@ services:
       - api
 
   admin:
+    logging: *logging
     build:
       context: .
       dockerfile: apps/admin/Dockerfile
@@ -157,6 +172,7 @@ services:
       - api
 
   web:
+    logging: *logging
     build:
       context: .
       dockerfile: apps/web/Dockerfile
@@ -169,6 +185,7 @@ services:
       - api
 
   caddy:
+    logging: *logging
     image: caddy:2-alpine
     restart: unless-stopped
     ports:

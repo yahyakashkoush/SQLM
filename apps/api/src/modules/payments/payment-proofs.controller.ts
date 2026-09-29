@@ -16,7 +16,7 @@ import {
   type AuthenticatedCustomer,
 } from '../rbac/decorators/current-customer.decorator';
 
-const MAX_PROOF_FILE_BYTES = 10 * 1024 * 1024;
+import { MAX_PROOF_FILE_BYTES } from './payment-proofs.service';
 
 @Controller('orders/:orderId/payment-proof')
 @UseGuards(JwtCustomerAuthGuard)

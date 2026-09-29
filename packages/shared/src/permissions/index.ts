@@ -17,6 +17,7 @@ export type Role = (typeof ROLES)[number];
 export const PERMISSIONS = [
   'products.read',
   'products.write',
+  'products.delete',
   'categories.read',
   'categories.write',
   'inventory.read',
@@ -25,6 +26,7 @@ export const PERMISSIONS = [
   'orders.read',
   'orders.write',
   'orders.transition',
+  'orders.delete',
   'payments.methods.read',
   'payments.methods.write',
   'payments.proofs.read',
@@ -37,6 +39,7 @@ export const PERMISSIONS = [
   'support.write',
   'customers.read',
   'customers.write',
+  'customers.ban',
   'staff.read',
   'staff.write',
   'roles.read',
@@ -54,6 +57,7 @@ export const ROLE_PERMISSIONS: Record<Role, readonly Permission[]> = {
   ADMIN: [
     'products.read',
     'products.write',
+    'products.delete',
     'categories.read',
     'categories.write',
     'inventory.read',
@@ -74,6 +78,7 @@ export const ROLE_PERMISSIONS: Record<Role, readonly Permission[]> = {
     'support.write',
     'customers.read',
     'customers.write',
+    'customers.ban',
     'analytics.read',
     'settings.read',
     'audit_logs.read',
@@ -85,6 +90,7 @@ export const ROLE_PERMISSIONS: Record<Role, readonly Permission[]> = {
     'orders.read',
     'orders.transition',
     'customers.read',
+    'customers.ban',
   ],
   SUPPORT_AGENT: ['support.read', 'support.write', 'customers.read', 'orders.read'],
   DELIVERY_AGENT: [

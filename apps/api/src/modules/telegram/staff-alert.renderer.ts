@@ -5,6 +5,7 @@ import type { Permission } from '@sqlm/shared';
 import { PrismaService } from '../prisma/prisma.service';
 import { StorageService } from '../storage/storage.service';
 import type { NotificationJob } from '../notifications/notification-dispatcher.service';
+import { assessProofRisk } from '../payments/proof-risk';
 
 export interface StaffAlertButton {
   text: string;
@@ -26,7 +27,11 @@ export interface StaffAlert {
 const CAPTION_LIMIT = 1024;
 const MAX_ITEM_LINES = 5;
 
-const MEMBER_DISCOUNT_LABELS = { VERIFIED: 'خصم العميل المميز', WELCOME: 'هدية أول طلب' } as const;
+const MEMBER_DISCOUNT_LABELS = {
+  VERIFIED: 'خصم العميل المميز',
+  WELCOME: 'هدية أول طلب',
+  LEGACY: 'خصم العميل القديم',
+} as const;
 
 type OrderForAlert = Prisma.OrderGetPayload<{
   include: {
@@ -114,11 +119,15 @@ export class StaffAlertRenderer {
       orderBy: { uploadedAt: 'desc' },
     });
     const pending = proof?.status === 'PENDING';
+    // Warnings first: the caption is clipped from the end, and these are
+    // what must not be lost.
+    const risk = proof ? await assessProofRisk(this.prisma, proof) : null;
     const text = clip(
       [
         `🧾 إثبات دفع — طلب #${order.sequenceNumber}`,
+        ...(risk && risk.flags.length > 0 ? [risk.flags.join('\n')] : []),
         describeOrder(order),
-        pending ? '👇 راجع الإيصال وقرّر:' : '✔️ الإثبات ده اتراجع خلاص.',
+        pending ? '👇 راجع الإيصال على كشف الحساب وقرّر:' : '✔️ الإثبات ده اتراجع خلاص.',
       ].join('\n\n'),
     );
 

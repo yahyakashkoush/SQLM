@@ -42,8 +42,8 @@ export class DeliveryMessageRenderer {
       quantity: delivery.orderItem.quantity,
       content,
       instructions: product.activationInstructions ? `📝 ${product.activationInstructions}` : '',
-      warranty: product.warranty ?? '',
-      duration: product.duration ?? '',
+      warranty: product.warranty || '—',
+      duration: product.duration || '—',
       customer_name: delivery.order.customer.firstName ?? '',
     });
   }

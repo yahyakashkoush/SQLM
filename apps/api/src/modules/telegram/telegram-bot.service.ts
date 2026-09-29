@@ -12,19 +12,25 @@ import { PrismaService } from '../prisma/prisma.service';
 import { SettingsService } from '../settings/settings.service';
 import { RedisService } from '../redis/redis.service';
 import {
+  CANCEL_SHARE_LABEL,
   MENU_ACTION_BY_LABEL,
   buildMainMenuKeyboard,
+  buildSharePhoneKeyboard,
   buildWebAppButton,
   type MainMenuAction,
 } from './keyboards/main-menu.keyboard';
+import { LoyaltyService } from '../loyalty/loyalty.service';
+import { LegacyCustomersService } from '../loyalty/legacy-customers.service';
 import { withTimeout } from '../../common/utils/with-timeout';
 import {
+  FAKE_PROOF_REASON,
   REJECT_REASONS,
   STAFF_LINK_PREFIX,
   StaffTelegramService,
   type ReviewOutcome,
 } from './staff-telegram.service';
 import type { StaffAlert } from './staff-alert.renderer';
+import { FLOOD_MUTE_SECONDS } from './bot-guard.service';
 
 const INIT_TIMEOUT_MS = 8000;
 const INIT_RETRY_INTERVAL_MS = 30_000;
@@ -33,6 +39,10 @@ const PROOF_MIME_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp', 'appl
 /** How long a tapped "search" stays armed before the chat is back to support. */
 const SEARCH_ARM_TTL_SECONDS = 120;
 const SEARCH_RESULT_LIMIT = 8;
+/** Longer than any real support message; a wall of text is either spam or a paste accident. */
+const MAX_TEXT_LENGTH = 2000;
+/** A banned user hears why once in a while, not on every tap. */
+const BAN_NOTICE_TTL_SECONDS = 12 * 60 * 60;
 
 const searchArmKey = (chatId: number) => `tg:search-arm:${chatId}`;
 
@@ -45,6 +55,8 @@ const CALLBACK = {
   reason: new RegExp(`^prr:(${UUID}):(\\d+)$`),
   customReason: new RegExp(`^prc:(${UUID})$`),
   back: new RegExp(`^pb:(${UUID})$`),
+  fake: new RegExp(`^pf:(${UUID})$`),
+  fakeConfirm: new RegExp(`^pfc:(${UUID})$`),
 };
 
 function reviewKeyboard(proofId: string, links: InlineKeyboardMarkup['inline_keyboard']): InlineKeyboard {
@@ -56,7 +68,17 @@ function reviewKeyboard(proofId: string, links: InlineKeyboardMarkup['inline_key
 function reasonsKeyboard(proofId: string, links: InlineKeyboardMarkup['inline_keyboard']): InlineKeyboard {
   const keyboard = new InlineKeyboard();
   REJECT_REASONS.forEach((reason, i) => keyboard.text(reason, `prr:${proofId}:${i}`).row());
+  keyboard.text('🚫 إيصال مزيف + حظر العميل', `pf:${proofId}`).row();
   keyboard.text('✍️ سبب تاني', `prc:${proofId}`).text('↩️ رجوع', `pb:${proofId}`);
+  return appendRows(keyboard, links);
+}
+
+/** A ban is not undone by a mistap, so it asks once. */
+function fakeConfirmKeyboard(proofId: string, links: InlineKeyboardMarkup['inline_keyboard']): InlineKeyboard {
+  const keyboard = new InlineKeyboard()
+    .text('✅ أيوه — ارفض واحظر', `pfc:${proofId}`)
+    .row()
+    .text('↩️ لا، رجوع', `pb:${proofId}`);
   return appendRows(keyboard, links);
 }
 
@@ -85,6 +107,7 @@ export const BOT_COMMANDS = [
   { command: 'orders', description: 'طلباتي' },
   { command: 'account', description: 'حسابي' },
   { command: 'support', description: 'الدعم الفني' },
+  { command: 'rules', description: 'الضمان والشروط' },
 ];
 
 /**
@@ -113,6 +136,8 @@ export class TelegramBotService implements OnModuleInit {
     private readonly settings: SettingsService,
     private readonly redis: RedisService,
     private readonly staffTelegram: StaffTelegramService,
+    private readonly loyalty: LoyaltyService,
+    private readonly legacy: LegacyCustomersService,
   ) {
     const token = this.config.get<string>('TELEGRAM_BOT_TOKEN') || 'unset:unset';
     this.bot = new Bot(token);
@@ -274,6 +299,18 @@ export class TelegramBotService implements OnModuleInit {
     await this.bot.api.sendMessage(chatId, alert.text, { reply_markup });
   }
 
+  /** The one message a flooding user gets before being ignored for a while. */
+  async sendFloodWarning(chatId: number): Promise<void> {
+    if (!(await this.ensureReady())) return;
+    await this.bot.api
+      .sendMessage(
+        chatId,
+        `⚠️ وصلنا منك رسايل كتير ورا بعض، فالبوت هيتجاهل رسايلك ${Math.round(FLOOD_MUTE_SECONDS / 60)} دقايق.\n` +
+          'لو محتاج حاجة، ابعت رسالة واحدة واضحة بعد المدة دي وهنرد عليك.',
+      )
+      .catch((err) => this.logger.warn(`Flood warning to ${chatId} failed: ${err instanceof Error ? err.message : err}`));
+  }
+
   /** The bot's @username, for building t.me deep links. Null while unreachable. */
   async username(): Promise<string | null> {
     return (await this.ensureReady()) ? this.bot.botInfo.username : null;
@@ -358,11 +395,24 @@ export class TelegramBotService implements OnModuleInit {
   // ---------------------------------------------------------------------------
 
   private registerHandlers(): void {
+    // First in the chain: a banned customer reaches no handler at all.
+    this.bot.use(async (ctx, next) => {
+      if (ctx.from && (await this.isBanned(ctx.from.id))) {
+        await this.noticeBanned(ctx);
+        return;
+      }
+      await next();
+    });
+
     this.bot.command('start', async (ctx) => {
       // t.me/<bot>?start=staff_<token>, from "link my Telegram" in the dashboard.
       const payload = typeof ctx.match === 'string' ? ctx.match.trim() : '';
       if (payload.startsWith(STAFF_LINK_PREFIX)) {
         await this.handleStaffLink(ctx, payload.slice(STAFF_LINK_PREFIX.length));
+        return;
+      }
+      if (payload === 'legacy') {
+        await this.handleMenu(ctx, 'LEGACY');
         return;
       }
 
@@ -371,7 +421,8 @@ export class TelegramBotService implements OnModuleInit {
         ...(await this.settings.storeValues()),
         customer_name: customer?.firstName ?? '',
       });
-      await ctx.reply(text, { reply_markup: buildMainMenuKeyboard() });
+      const perks = customer ? await this.perkLines(customer.id) : [];
+      await ctx.reply([text, ...perks].join('\n\n'), { reply_markup: buildMainMenuKeyboard() });
       await ctx.reply('اضغط للدخول للمتجر 👇', {
         reply_markup: buildWebAppButton('🛍️ افتح المتجر', this.miniAppUrl),
       });
@@ -381,7 +432,10 @@ export class TelegramBotService implements OnModuleInit {
     this.bot.command('account', async (ctx) => this.replyWithAccount(ctx));
     this.bot.command('support', async (ctx) => this.handleMenu(ctx, 'SUPPORT'));
 
+    this.bot.command('rules', async (ctx) => this.handleMenu(ctx, 'RULES'));
+
     this.bot.on(['message:photo', 'message:document'], async (ctx) => this.handleProofUpload(ctx));
+    this.bot.on('message:contact', async (ctx) => this.handleSharedContact(ctx));
 
     this.registerReviewHandlers();
 
@@ -390,9 +444,18 @@ export class TelegramBotService implements OnModuleInit {
     this.bot.on('message:text', async (ctx) => {
       const text = ctx.message.text.trim();
       if (!text || text.startsWith('/')) return;
+      if (text.length > MAX_TEXT_LENGTH) {
+        await ctx.reply(`⚠️ الرسالة طويلة جداً. اختصرها في أقل من ${MAX_TEXT_LENGTH} حرف وابعتها تاني.`);
+        return;
+      }
 
       // A staff member who tapped "other reason" is typing the reason.
       if (await this.consumeRejectReason(ctx, text)) return;
+
+      if (text === CANCEL_SHARE_LABEL) {
+        await ctx.reply('تمام 👌', { reply_markup: buildMainMenuKeyboard() });
+        return;
+      }
 
       const action = MENU_ACTION_BY_LABEL[text];
       if (action) {
@@ -474,6 +537,21 @@ export class TelegramBotService implements OnModuleInit {
       await this.staffTelegram.armCustomReason(ctx.chat!.id, `${ctx.match[1]}:${messageId ?? ''}`);
       await ctx.answerCallbackQuery();
       await ctx.reply('✍️ اكتب سبب الرفض في رسالة واحدة — هيتبعت للعميل كما هو.');
+    });
+
+    this.bot.callbackQuery(CALLBACK.fake, async (ctx) => {
+      await ctx.editMessageReplyMarkup({
+        reply_markup: fakeConfirmKeyboard(ctx.match[1]!, linkRows(ctx.callbackQuery.message?.reply_markup)),
+      });
+      await ctx.answerCallbackQuery({
+        text: '⚠️ هيترفض الإيصال، يتلغي الطلب، ويتحظر العميل من المتجر.',
+        show_alert: true,
+      });
+    });
+
+    this.bot.callbackQuery(CALLBACK.fakeConfirm, async (ctx) => {
+      const outcome = await this.staffTelegram.rejectAsFake(ctx.from.id, ctx.match[1]!);
+      await this.settleReview(ctx, outcome, (name) => `🚫 ${FAKE_PROOF_REASON} — اتحظر العميل بواسطة ${name}`);
     });
 
     this.bot.callbackQuery(CALLBACK.back, async (ctx) => {
@@ -573,6 +651,93 @@ export class TelegramBotService implements OnModuleInit {
       case 'ACCOUNT':
         await this.replyWithAccount(ctx);
         return;
+      case 'RULES':
+        await ctx.reply(renderTemplate(await this.settings.getString('store.rules'), values), {
+          reply_markup: buildWebAppButton('🛍️ افتح المتجر', this.miniAppUrl),
+        });
+        return;
+      case 'LEGACY':
+        await this.offerLegacyClaim(ctx);
+        return;
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Old customers
+  // ---------------------------------------------------------------------------
+
+  private async offerLegacyClaim(ctx: Context): Promise<void> {
+    const customer = await this.upsertCustomer(ctx);
+    if (!customer) return;
+    const perks = await this.loyalty.perksFor(customer.id);
+    if (perks.legacyDiscountPercent !== null) {
+      await ctx.reply(`⭐ انت متسجّل عندنا كعميل قديم، وخصمك ${perks.legacyDiscountPercent}% مفعّل على كل طلباتك.`);
+      return;
+    }
+    if (!perks.legacyOfferAvailable) {
+      await ctx.reply('العرض ده مش متاح دلوقتي. تابعنا — العروض الجديدة بتنزل هنا في البوت 🔥');
+      return;
+    }
+    await ctx.reply(await this.legacy.offerMessage(customer.firstName), { reply_markup: buildSharePhoneKeyboard() });
+  }
+
+  /**
+   * Only a contact that is the sender's own account counts: Telegram sets
+   * `user_id` on a shared contact, and forwarding somebody else's contact
+   * card carries *their* id, not the sender's.
+   */
+  private async handleSharedContact(ctx: Context): Promise<void> {
+    const contact = ctx.message?.contact;
+    if (!contact || !ctx.from) return;
+    if (contact.user_id !== ctx.from.id) {
+      await ctx.reply('⚠️ لازم تشارك رقمك انت من زرار «📱 شارك رقمي» — مش جهة اتصال تانية.', {
+        reply_markup: buildSharePhoneKeyboard(),
+      });
+      return;
+    }
+    const customer = await this.upsertCustomer(ctx);
+    if (!customer) return;
+
+    const outcome = await this.legacy.claim(customer.id, contact.phone_number, customer.firstName);
+    const menu = { reply_markup: buildMainMenuKeyboard() };
+    switch (outcome.status) {
+      case 'CLAIMED':
+        await ctx.reply(outcome.message, menu);
+        await ctx.reply('يلا نتسوّق بخصمك 👇', { reply_markup: buildWebAppButton('🛍️ افتح المتجر', this.miniAppUrl) });
+        return;
+      case 'ALREADY_CLAIMED':
+        await ctx.reply(`⭐ انت متسجّل عندنا كعميل قديم، وخصمك ${outcome.percent}% مفعّل بالفعل.`, menu);
+        return;
+      case 'TAKEN':
+        await ctx.reply(
+          `⚠️ الرقم ده اتفعّل على حساب تيليجرام تاني. لو ده حسابك الجديد كلّم الدعم وهنحوّله: ${(await this.settings.storeValues()).support_contact}`,
+          menu,
+        );
+        return;
+      default:
+        await ctx.reply(
+          'مش لاقيين رقمك في قائمة عملائنا القدام 🙏\nلو كنت بتتعامل معانا برقم تاني ابعت للدعم الرقم ده وهنراجعه.',
+          menu,
+        );
+    }
+  }
+
+  /** The customer's current offer, appended to the welcome message. */
+  private async perkLines(customerId: string): Promise<string[]> {
+    try {
+      const perks = await this.loyalty.perksFor(customerId);
+      if (perks.legacyDiscountPercent) return [`⭐ خصم العميل القديم ${perks.legacyDiscountPercent}% مفعّل على كل طلباتك.`];
+      if (perks.tier === 'VERIFIED' && perks.verifiedDiscountPercent > 0) {
+        return [`⭐ انت عميل مميز — خصمك ${perks.verifiedDiscountPercent}% بيتطبّق تلقائي.`];
+      }
+      const lines: string[] = [];
+      if (perks.welcomeGift?.available) lines.push(perks.welcomeGift.message);
+      if (perks.legacyOfferAvailable && perks.tier === 'REGULAR') {
+        lines.push('🎁 كنت عميل عندنا قبل كده؟ اضغط «🎁 عميل قديم؟» وفعّل خصمك.');
+      }
+      return lines;
+    } catch {
+      return [];
     }
   }
 
@@ -693,6 +858,22 @@ export class TelegramBotService implements OnModuleInit {
         reply_markup: buildWebAppButton('صفحة الطلب', `${this.miniAppUrl}/orders/${order.id}`),
       });
     }
+  }
+
+  private async isBanned(telegramId: number): Promise<boolean> {
+    const customer = await this.prisma.customer.findUnique({
+      where: { telegramId: BigInt(telegramId) },
+      select: { status: true },
+    });
+    return customer?.status === 'BANNED';
+  }
+
+  private async noticeBanned(ctx: Context): Promise<void> {
+    if (ctx.callbackQuery) await ctx.answerCallbackQuery().catch(() => undefined);
+    if (!ctx.chat || ctx.chat.type !== 'private') return;
+    if (!(await this.redis.claimOnce(`tg:ban-notice:${ctx.from!.id}`, BAN_NOTICE_TTL_SECONDS))) return;
+    const text = renderTemplate(await this.settings.getString('bot.bannedMessage'), await this.settings.storeValues());
+    await ctx.reply(text).catch(() => undefined);
   }
 
   private async upsertCustomer(ctx: Context) {

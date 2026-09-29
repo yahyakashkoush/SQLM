@@ -21,6 +21,9 @@ export interface SettingDefinition {
   max?: number;
 }
 
+/** Values every customer-facing template can use; filled by SettingsService.storeValues(). */
+const STORE_PLACEHOLDERS = ['store_name', 'support_contact', 'delivery_time'] as const;
+
 const DELIVERY_PLACEHOLDERS = [
   'order_number',
   'product_name',
@@ -32,6 +35,7 @@ const DELIVERY_PLACEHOLDERS = [
   'customer_name',
   'store_name',
   'support_contact',
+  'delivery_time',
 ] as const;
 
 export const SETTING_DEFINITIONS: readonly SettingDefinition[] = [
@@ -51,6 +55,33 @@ export const SETTING_DEFINITIONS: readonly SettingDefinition[] = [
     help: 'Pre-selected when creating new products (3-letter code, e.g. EGP or USD).',
     type: 'text',
     default: 'USD',
+  },
+  {
+    key: 'store.deliveryTime',
+    group: 'store',
+    label: 'Delivery time promise',
+    help: 'Shown in the welcome, payment and approval messages as {delivery_time}.',
+    type: 'text',
+    default: 'من 15 دقيقة لحد ساعتين',
+  },
+  {
+    key: 'store.rules',
+    group: 'store',
+    label: 'Warranty & rules (📜 button in the bot)',
+    help: 'What the customer reads before buying: warranty, what voids it, and the fake-transfer policy.',
+    type: 'textarea',
+    default:
+      '📜 الضمان وشروط الاستخدام — {store_name}\n\n' +
+      '✅ كل حساب عليه ضمان طول المدة المكتوبة في صفحة المنتج.\n' +
+      '🔁 لو حصلت مشكلة خلال الضمان بنصلّحها أو نبدّل الحساب مجاناً.\n' +
+      '⏱️ التسليم {delivery_time} بعد تأكيد الدفع.\n\n' +
+      '⚠️ عشان الضمان يفضل ساري:\n' +
+      '• ماتغيّرش الإيميل أو الباسورد إلا لو المنتج مكتوب إنه حساب خاص بيك.\n' +
+      '• ماتشاركش الحساب مع حد، وماتسجّلش خروج باقي الأجهزة.\n' +
+      '• ماتفعّلش التحقق بخطوتين على حساب مشترك.\n\n' +
+      '🚫 أي تحويل مزيف أو إيصال معدّل أو مكرر = إلغاء الطلب وحظر نهائي.\n\n' +
+      'للاستفسار: {support_contact}',
+    placeholders: STORE_PLACEHOLDERS,
   },
   {
     key: 'pricing.egpPerUsd',
@@ -103,21 +134,57 @@ export const SETTING_DEFINITIONS: readonly SettingDefinition[] = [
     placeholders: ['percent', 'store_name', 'customer_name'],
   },
   {
+    key: 'customers.legacyDiscountPercent',
+    group: 'customers',
+    label: 'Old customers discount (%)',
+    help:
+      'For customers you had before this store: add their phone numbers on the Old Customers page. When one of them shares that number from their own Telegram (🎁 button in the bot) they get this discount on every order. A number can carry its own percentage instead. 0 = the offer is hidden.',
+    type: 'number',
+    default: 0,
+    min: 0,
+    max: 90,
+  },
+  {
+    key: 'customers.legacyOfferMessage',
+    group: 'customers',
+    label: 'Old customer offer (bot, before sharing the number)',
+    type: 'textarea',
+    default:
+      '🎁 كنت عميل عندنا قبل كده؟\n\nاضغط «📱 شارك رقمي» تحت — لو رقمك في قائمة عملائنا القدام هيتفعّل ليك خصم {percent}% على كل طلباتك تلقائي.\n\n🔒 الرقم بيتستخدم للتحقق بس ومش بيظهر لحد.',
+    placeholders: ['percent', 'store_name', 'customer_name'],
+  },
+  {
+    key: 'customers.legacyWelcomeMessage',
+    group: 'customers',
+    label: 'Old customer matched (bot)',
+    type: 'textarea',
+    default:
+      '🎉 أهلاً بيك تاني يا {customer_name}!\nاتعرّفنا عليك كعميل قديم، واتفعّل ليك خصم {percent}% على كل طلباتك — بيتطبّق لوحده من غير كود.',
+    placeholders: ['percent', 'store_name', 'customer_name'],
+  },
+  {
     key: 'bot.welcomeMessage',
     group: 'bot',
     label: 'Welcome message (/start)',
     type: 'textarea',
     default:
-      'أهلاً بيك في {store_name} 👋\n\nهنا تقدر تشتري الاشتراكات والمنتجات الرقمية، تتابع طلباتك، وتكلم الدعم — كله من القائمة تحت 👇',
-    placeholders: ['store_name', 'customer_name', 'support_contact'],
+      'أهلاً بيك يا {customer_name} في {store_name} 👋\n\n' +
+      'اشتراكات وأدوات رقمية أصلية بأسعار أقل بكتير — ChatGPT · Canva · Adobe · CapCut · Figma · VPN وأكتر.\n\n' +
+      '⚡ تسليم {delivery_time}\n' +
+      '🛡️ ضمان على كل حساب طول المدة\n' +
+      '💳 فودافون كاش · إنستاباي · USDT\n' +
+      '💬 دعم حقيقي هنا في الشات\n\n' +
+      'اضغط «🛍️ افتح المتجر» واختار اللي محتاجه 👇',
+    placeholders: ['store_name', 'customer_name', 'support_contact', 'delivery_time'],
   },
   {
     key: 'bot.supportMessage',
     group: 'bot',
     label: 'Support button reply',
     type: 'textarea',
-    default: '🎫 محتاج مساعدة؟ اكتب رسالتك هنا مباشرة وفريق الدعم هيرد عليك، أو افتح تذكرة من التطبيق.\nللتواصل: {support_contact}',
-    placeholders: ['store_name', 'support_contact'],
+    default:
+      '🎫 محتاج مساعدة؟\nاكتب مشكلتك في رسالة واحدة هنا — ولو عن طلب اكتب رقمه — وفريق الدعم هيرد عليك في نفس الشات.\nأو كلّمنا مباشرة: {support_contact}',
+    placeholders: STORE_PLACEHOLDERS,
   },
   {
     key: 'bot.paymentMessage',
@@ -125,8 +192,24 @@ export const SETTING_DEFINITIONS: readonly SettingDefinition[] = [
     label: 'Payment button reply',
     type: 'textarea',
     default:
-      '💳 طرق الدفع بتظهر عند إتمام الطلب. بعد التحويل ابعت صورة الإيصال هنا في الشات أو ارفعها من صفحة الطلب في التطبيق.',
-    placeholders: ['store_name', 'support_contact'],
+      '💳 إزاي تدفع؟\n\n' +
+      '1️⃣ اختار المنتج من المتجر واضغط «اطلب».\n' +
+      '2️⃣ اختار طريقة الدفع — هيظهرلك الرقم والمبلغ بالظبط (بالجنيه لو الطريقة مصرية).\n' +
+      '3️⃣ حوّل المبلغ بالظبط وابعت صورة الإيصال هنا في الشات أو من صفحة الطلب.\n' +
+      '4️⃣ بنراجع التحويل ونسلّمك {delivery_time}.\n\n' +
+      '💎 بالـ USDT؟ الطلب بيتأكد تلقائي أول ما التحويل يوصل — من غير إيصال.\n\n' +
+      '{proof_warning}',
+    placeholders: [...STORE_PLACEHOLDERS, 'proof_warning'],
+  },
+  {
+    key: 'bot.bannedMessage',
+    group: 'bot',
+    label: 'Message to a banned customer',
+    help: 'Sent at most twice a day; everything else a banned customer sends is ignored.',
+    type: 'textarea',
+    default:
+      '🚫 حسابك في {store_name} موقوف بسبب مخالفة شروط الاستخدام.\nلو شايف إن ده حصل بالغلط تواصل مع {support_contact}.',
+    placeholders: STORE_PLACEHOLDERS,
   },
   {
     key: 'delivery.message',
@@ -135,7 +218,9 @@ export const SETTING_DEFINITIONS: readonly SettingDefinition[] = [
     help: 'Sent on Telegram when an order item is delivered. A delivery template can override it.',
     type: 'textarea',
     default:
-      '✅ تم تسليم طلبك #{order_number}\n\n📦 المنتج: {product_name}\n\n🔐 بيانات الطلب:\n{content}\n\n{instructions}\n\nلو في أي مشكلة تواصل مع الدعم: {support_contact}\nشكراً لتعاملك مع {store_name} 💙',
+      '✅ طلبك #{order_number} جاهز!\n\n📦 {product_name}\n\n🔐 بيانات الدخول:\n{content}\n\n{instructions}\n\n' +
+      '⚠️ ماتغيّرش بيانات الحساب إلا لو مكتوب إنه حساب خاص بيك — ده بيلغي الضمان.\n' +
+      'أي مشكلة كلّمنا فوراً: {support_contact}\nشكراً لثقتك في {store_name} 💙',
     placeholders: DELIVERY_PLACEHOLDERS,
   },
   {
@@ -151,16 +236,27 @@ export const SETTING_DEFINITIONS: readonly SettingDefinition[] = [
     group: 'orders',
     label: 'Payment approved message',
     type: 'textarea',
-    default: '✅ تم تأكيد الدفع لطلبك #{order_number}. جاري تجهيز طلبك الآن.',
-    placeholders: ['order_number', 'store_name'],
+    default: '✅ تم تأكيد الدفع لطلبك #{order_number}.\nجاري تجهيز طلبك وهيوصلك هنا {delivery_time} 🚀',
+    placeholders: ['order_number', ...STORE_PLACEHOLDERS],
   },
   {
     key: 'orders.paymentRejectedMessage',
     group: 'orders',
     label: 'Payment rejected message',
     type: 'textarea',
-    default: '❌ تم رفض إثبات الدفع لطلبك #{order_number}.\nالسبب: {reason}\n\nتقدر ترفع إثبات جديد من صفحة الطلب.',
-    placeholders: ['order_number', 'reason', 'store_name'],
+    default:
+      '❌ تم رفض إثبات الدفع لطلبك #{order_number}.\nالسبب: {reason}\n\nلو حوّلت فعلاً ابعت صورة الإيصال الصحيحة من صفحة الطلب أو هنا في الشات.',
+    placeholders: ['order_number', 'reason', ...STORE_PLACEHOLDERS],
+  },
+  {
+    key: 'orders.proofWarning',
+    group: 'orders',
+    label: 'Fake-transfer warning',
+    help: 'Shown on the payment step in the Mini App and at the end of the bot payment guide.',
+    type: 'textarea',
+    default:
+      '⚠️ كل تحويل بيتراجع يدوياً على كشف الحساب. أي إيصال مزيف أو معدّل أو مستخدم قبل كده = إلغاء الطلب وحظر نهائي.',
+    placeholders: STORE_PLACEHOLDERS,
   },
 ];
 

@@ -1,5 +1,18 @@
 import { Type } from 'class-transformer';
-import { IsIn, IsInt, IsOptional, IsString, Max, MaxLength, Min } from 'class-validator';
+import {
+  ArrayMaxSize,
+  ArrayMinSize,
+  IsArray,
+  IsBoolean,
+  IsIn,
+  IsInt,
+  IsOptional,
+  IsString,
+  IsUUID,
+  Max,
+  MaxLength,
+  Min,
+} from 'class-validator';
 import { ORDER_STATUSES, type OrderStatus } from '@sqlm/shared';
 
 export class OrderQueryDto {
@@ -35,4 +48,17 @@ export class TransitionOrderDto {
   @IsString()
   @MaxLength(500)
   note?: string;
+}
+
+export class BulkDeleteOrdersDto {
+  @IsArray()
+  @ArrayMinSize(1)
+  @ArrayMaxSize(100)
+  @IsUUID('4', { each: true })
+  ids!: string[];
+
+  /** Put a paid order's goods back in stock too. Unpaid orders always release theirs. */
+  @IsOptional()
+  @IsBoolean()
+  restock?: boolean;
 }

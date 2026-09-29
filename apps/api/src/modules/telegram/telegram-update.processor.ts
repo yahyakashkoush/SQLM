@@ -27,8 +27,12 @@ export class TelegramUpdateProcessor extends WorkerHost {
     super();
   }
 
-  async process(job: Job<Update>): Promise<void> {
-    const update = job.data;
+  async process(job: Job<Update> | Job<{ chatId: number }>): Promise<void> {
+    if (job.name === 'flood-warning') {
+      await this.bot.sendFloodWarning((job.data as { chatId: number }).chatId);
+      return;
+    }
+    const update = job.data as Update;
     const updateId = BigInt(update.update_id);
 
     try {

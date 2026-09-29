@@ -1,6 +1,7 @@
-import { Body, Controller, Get, Param, Post, Query, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, ParseUUIDPipe, Post, Query, UseGuards } from '@nestjs/common';
 import { OrdersService } from './orders.service';
-import { OrderQueryDto, TransitionOrderDto } from './dto/order-query.dto';
+import { BulkDeleteOrdersDto, OrderQueryDto, TransitionOrderDto } from './dto/order-query.dto';
+import { OrderCleanupService } from './order-cleanup.service';
 import { JwtStaffAuthGuard } from '../rbac/guards/jwt-staff-auth.guard';
 import { PermissionsGuard } from '../rbac/guards/permissions.guard';
 import { Permissions } from '../rbac/decorators/permissions.decorator';
@@ -13,7 +14,15 @@ export class AdminOrdersController {
   constructor(
     private readonly orders: OrdersService,
     private readonly delivery: DeliveryDispatcher,
+    private readonly cleanup: OrderCleanupService,
   ) {}
+
+  /** Declared before `:id` routes so "bulk-delete" is never read as an id. */
+  @Post('bulk-delete')
+  @Permissions('orders.delete')
+  bulkDelete(@Body() dto: BulkDeleteOrdersDto, @CurrentStaff() staff: AuthenticatedStaff) {
+    return this.cleanup.deleteMany(dto.ids, staff.id, dto.restock ?? false);
+  }
 
   @Get()
   @Permissions('orders.read')
@@ -43,5 +52,15 @@ export class AdminOrdersController {
     // Same post-commit rule as the payment-approval path.
     if (dto.toStatus === 'PAID') await this.delivery.dispatch(id);
     return order;
+  }
+
+  @Delete(':id')
+  @Permissions('orders.delete')
+  remove(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Query('restock') restock: string | undefined,
+    @CurrentStaff() staff: AuthenticatedStaff,
+  ) {
+    return this.cleanup.deleteOrder(id, staff.id, restock === 'true');
   }
 }

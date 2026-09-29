@@ -17,6 +17,7 @@ import type { Queue } from 'bullmq';
 import type { Update } from 'grammy/types';
 import { RedisService } from '../redis/redis.service';
 import { QUEUE_NAMES } from '../queue/queue-names';
+import { BotGuardService } from './bot-guard.service';
 
 const UPDATE_ID_CLAIM_TTL_SECONDS = 24 * 60 * 60;
 
@@ -43,6 +44,7 @@ export class TelegramWebhookController {
     @InjectQueue(QUEUE_NAMES.TELEGRAM_UPDATES) private readonly queue: Queue,
     private readonly redis: RedisService,
     private readonly config: ConfigService,
+    private readonly guard: BotGuardService,
   ) {}
 
   @Post('webhook/:secret')
@@ -69,6 +71,15 @@ export class TelegramWebhookController {
     );
     if (!claimed) {
       this.logger.debug(`Duplicate Telegram update ${update.update_id} — already queued`);
+      return { ok: true };
+    }
+
+    const admission = await this.guard.admit(update);
+    if (admission.verdict === 'drop') return { ok: true };
+    if (admission.verdict === 'warn') {
+      await this.queue.add('flood-warning', { chatId: admission.chatId }, {
+        jobId: `telegram-flood-${update.update_id}`,
+      });
       return { ok: true };
     }
 

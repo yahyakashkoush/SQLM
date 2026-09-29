@@ -1,6 +1,7 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import {
+  DeleteObjectCommand,
   GetObjectCommand,
   HeadBucketCommand,
   PutObjectCommand,
@@ -23,6 +24,7 @@ interface StorageBackend {
   verify?(): Promise<void>;
   upload(key: string, body: Buffer, contentType: string): Promise<void>;
   read(key: string): Promise<StoredFile | null>;
+  delete(key: string): Promise<void>;
   getPresignedUrl(key: string, expiresInSeconds: number): Promise<string>;
 }
 
@@ -95,6 +97,15 @@ export class StorageService implements OnModuleInit {
     return this.backend.getPresignedUrl(key, expiresInSeconds);
   }
 
+  /** Best effort: a file that is already gone is not an error. */
+  async delete(key: string): Promise<void> {
+    try {
+      await this.backend.delete(key);
+    } catch (err) {
+      this.logger.warn(`Could not delete ${key}: ${err instanceof Error ? err.message : err}`);
+    }
+  }
+
   /** Stable, unauthenticated URL for a key under PUBLIC_PREFIX. */
   publicUrl(key: string): string {
     if (this.publicBaseUrl) return `${this.publicBaseUrl}/${key}`;
@@ -156,6 +167,10 @@ class S3Backend implements StorageBackend {
     }
   }
 
+  async delete(key: string): Promise<void> {
+    await this.client.send(new DeleteObjectCommand({ Bucket: this.bucket, Key: key }));
+  }
+
   async getPresignedUrl(key: string, expiresInSeconds: number): Promise<string> {
     const command = new GetObjectCommand({ Bucket: this.bucket, Key: key });
     return getSignedUrl(this.client, command, { expiresIn: expiresInSeconds });
@@ -201,6 +216,13 @@ class LocalBackend implements StorageBackend {
     } catch {
       return null;
     }
+  }
+
+  async delete(key: string): Promise<void> {
+    const filePath = this.resolve(key);
+    if (!filePath) return;
+    await fs.rm(filePath, { force: true });
+    await fs.rm(filePath + META_EXT, { force: true });
   }
 
   async getPresignedUrl(key: string, expiresInSeconds: number): Promise<string> {

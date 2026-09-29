@@ -28,3 +28,22 @@ export class UnsupportedProofFileTypeError extends DomainError {
     this.name = 'UnsupportedProofFileTypeError';
   }
 }
+
+export class TooManyProofAttemptsError extends DomainError {
+  readonly httpStatus = HttpStatus.TOO_MANY_REQUESTS;
+  readonly code = 'TOO_MANY_PROOFS';
+
+  constructor(public readonly limit: number) {
+    super(`This order already has ${limit} payment proofs. Contact support to continue.`);
+    this.name = 'TooManyProofAttemptsError';
+  }
+}
+
+export class ProofFileTooLargeError extends DomainError {
+  readonly httpStatus = HttpStatus.PAYLOAD_TOO_LARGE;
+
+  constructor(public readonly maxBytes: number) {
+    super(`Payment proof is larger than ${Math.round(maxBytes / 1024 / 1024)}MB`);
+    this.name = 'ProofFileTooLargeError';
+  }
+}

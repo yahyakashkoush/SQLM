@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { nanoid } from 'nanoid';
 import { PrismaService } from '../prisma/prisma.service';
@@ -9,10 +10,16 @@ import { OrdersService } from '../orders/orders.service';
 import {
   OrderNotAwaitingPaymentError,
   ProofAlreadyReviewedError,
+  ProofFileTooLargeError,
+  TooManyProofAttemptsError,
   UnsupportedProofFileTypeError,
 } from './errors/payment-proof.errors';
+import { assessProofRisk } from './proof-risk';
 
 const ALLOWED_MIME_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp', 'application/pdf']);
+export const MAX_PROOF_FILE_BYTES = 10 * 1024 * 1024;
+/** Honest customers need one, sometimes two. Past this it is guessing or abuse, and it costs disk. */
+export const MAX_PROOFS_PER_ORDER = 5;
 
 export interface UploadedProofFile {
   buffer: Buffer;
@@ -41,6 +48,7 @@ export class PaymentProofsService {
    * submission — no separate dedup bookkeeping needed.
    */
   async uploadProof(orderId: string, customerId: string, file: UploadedProofFile) {
+    if (file.buffer.length > MAX_PROOF_FILE_BYTES) throw new ProofFileTooLargeError(MAX_PROOF_FILE_BYTES);
     if (!ALLOWED_MIME_TYPES.has(file.mimetype)) {
       throw new UnsupportedProofFileTypeError(file.mimetype);
     }
@@ -55,6 +63,9 @@ export class PaymentProofsService {
     if (order.status !== 'PENDING_PAYMENT') {
       throw new OrderNotAwaitingPaymentError(orderId);
     }
+    const attempts = await this.prisma.paymentProof.count({ where: { orderId } });
+    if (attempts >= MAX_PROOFS_PER_ORDER) throw new TooManyProofAttemptsError(MAX_PROOFS_PER_ORDER);
+    const contentHash = createHash('sha256').update(file.buffer).digest('hex');
 
     const extension = file.originalname.split('.').pop()?.slice(0, 10) ?? 'bin';
     const storageKey = `payment-proofs/${orderId}/${nanoid()}.${extension}`;
@@ -68,6 +79,7 @@ export class PaymentProofsService {
           storageKey,
           mimeType: file.mimetype,
           fileSize: file.size,
+          contentHash,
           status: 'PENDING',
         },
       });
@@ -105,11 +117,12 @@ export class PaymentProofsService {
   }
 
   async listPendingAdmin() {
-    return this.prisma.paymentProof.findMany({
+    const proofs = await this.prisma.paymentProof.findMany({
       where: { status: 'PENDING' },
       orderBy: { uploadedAt: 'asc' },
       include: { order: { include: { paymentMethod: { select: { name: true } } } }, customer: true },
     });
+    return Promise.all(proofs.map(async (p) => ({ ...p, risk: await assessProofRisk(this.prisma, p) })));
   }
 
   async findByIdAdmin(id: string) {
@@ -118,7 +131,7 @@ export class PaymentProofsService {
       include: { order: true, customer: true },
     });
     if (!proof) throw new NotFoundException('Payment proof not found');
-    return proof;
+    return { ...proof, risk: await assessProofRisk(this.prisma, proof) };
   }
 
   async getViewUrl(id: string): Promise<{ url: string }> {

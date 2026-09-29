@@ -9,6 +9,7 @@ import {
   SetCustomerVerifiedDto,
   UpdateSettingDto,
   UpdateStaffDto,
+  BanCustomerDto,
 } from './dto/admin.dto';
 import { JwtStaffAuthGuard } from '../rbac/guards/jwt-staff-auth.guard';
 import { PermissionsGuard } from '../rbac/guards/permissions.guard';
@@ -16,6 +17,7 @@ import { Permissions } from '../rbac/decorators/permissions.decorator';
 import { CurrentStaff, type AuthenticatedStaff } from '../rbac/decorators/current-staff.decorator';
 import { NotificationDispatcher } from '../notifications/notification-dispatcher.service';
 import { segmentWhere } from '../customers/customer-segments';
+import { CustomerModerationService } from '../orders/customer-moderation.service';
 
 @Controller('admin')
 @UseGuards(JwtStaffAuthGuard, PermissionsGuard)
@@ -24,6 +26,7 @@ export class AdminController {
     private readonly admin: AdminService,
     private readonly notifications: NotificationDispatcher,
     private readonly config: ConfigService,
+    private readonly moderation: CustomerModerationService,
   ) {}
 
   @Get('stats')
@@ -103,6 +106,20 @@ export class AdminController {
     @CurrentStaff() staff: AuthenticatedStaff,
   ) {
     return this.admin.updateSetting(key, dto, staff.id);
+  }
+
+  /** Suspends the account and cancels every order it has not paid for. */
+  @Post('customers/:id/ban')
+  @Permissions('customers.ban')
+  ban(@Param('id') id: string, @Body() dto: BanCustomerDto, @CurrentStaff() staff: AuthenticatedStaff) {
+    return this.moderation.ban(id, staff.id, dto.reason);
+  }
+
+  @Post('customers/:id/unban')
+  @Permissions('customers.ban')
+  async unban(@Param('id') id: string, @CurrentStaff() staff: AuthenticatedStaff) {
+    await this.moderation.unban(id, staff.id);
+    return { ok: true };
   }
 
   /** Staff override of the automatic verified status. */

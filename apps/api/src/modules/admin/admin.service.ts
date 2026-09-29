@@ -181,9 +181,11 @@ export class AdminService {
               { firstName: { contains: search, mode: 'insensitive' } },
               { lastName: { contains: search, mode: 'insensitive' } },
               { telegramUsername: { contains: search, mode: 'insensitive' } },
+              ...(/\d{4,}/.test(search) ? [{ phone: { contains: search.replace(/\D/g, '').replace(/^0/, '') } }] : []),
             ],
           }
         : {}),
+      ...(query.status ? { status: query.status } : {}),
     };
 
     const [items, total] = await this.prisma.$transaction([
@@ -261,6 +263,10 @@ export class AdminService {
         status: true,
         verifiedAt: true,
         welcomeGiftOrderId: true,
+        phone: true,
+        bannedAt: true,
+        banReason: true,
+        legacyEntry: { select: { id: true, phone: true, name: true, discountPercent: true, claimedAt: true } },
         createdAt: true,
         orders: {
           select: { id: true, sequenceNumber: true, status: true, total: true, createdAt: true },
@@ -281,10 +287,15 @@ export class AdminService {
       _sum: { total: true },
       _count: true,
     });
+    const rejectedProofs = await this.prisma.paymentProof.count({ where: { customerId: id, status: 'REJECTED' } });
     return {
       ...customer,
+      legacyEntry: customer.legacyEntry
+        ? { ...customer.legacyEntry, discountPercent: customer.legacyEntry.discountPercent?.toNumber() ?? null }
+        : null,
       paidOrders: spend._count,
       totalSpent: spend._sum.total?.toString() ?? '0',
+      rejectedProofs,
     };
   }
 

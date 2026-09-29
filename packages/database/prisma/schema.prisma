@@ -260,6 +260,11 @@ model Customer {
   /// with a conditional UPDATE inside checkout, so two simultaneous orders
   /// cannot both take it, and released if that order is cancelled.
   welcomeGiftOrderId String?
+  /// The account's own number, from Telegram's contact-share button (the
+  /// bot checks the contact belongs to the sender). Never typed in.
+  phone              String?
+  bannedAt           DateTime?
+  banReason          String?
   createdAt          DateTime       @default(now())
   updatedAt          DateTime       @updatedAt
 
@@ -269,9 +274,29 @@ model Customer {
   ticketMessages    TicketMessage[]    @relation("MessageAuthorCustomer")
   orderEvents       OrderEvent[]       @relation("OrderEventActorCustomer")
   couponRedemptions CouponRedemption[]
+  legacyEntry       LegacyCustomer?
 
   @@index([verifiedAt])
+  @@index([phone])
   @@map("customers")
+}
+
+/// A customer the store had before this platform, listed by phone number.
+/// Whoever shares that number from their own Telegram account claims the
+/// entry once and gets the old-customer discount on every order.
+model LegacyCustomer {
+  id              String    @id @default(uuid())
+  /// Digits only, international form ("201012345678").
+  phone           String    @unique
+  name            String?
+  /// Overrides the Settings percentage for this one person. Null = use Settings.
+  discountPercent Decimal?  @db.Decimal(5, 2)
+  claimedById     String?   @unique
+  claimedBy       Customer? @relation(fields: [claimedById], references: [id], onDelete: SetNull)
+  claimedAt       DateTime?
+  createdAt       DateTime  @default(now())
+
+  @@map("legacy_customers")
 }
 
 // =============================================================================
@@ -645,9 +670,13 @@ model PaymentProof {
   reviewedBy      Staff?             @relation("ProofReviewedBy", fields: [reviewedById], references: [id], onDelete: SetNull)
   reviewedAt      DateTime?
   uploadedAt      DateTime           @default(now())
+  /// SHA-256 of the file. The same screenshot turning up on another order
+  /// is the commonest fake-payment trick, and this is how it is caught.
+  contentHash     String?
 
   @@index([orderId, status])
   @@index([status])
+  @@index([contentHash])
   @@map("payment_proofs")
 }
 
@@ -756,6 +785,8 @@ enum MemberDiscountKind {
   VERIFIED
   /// One-time first-order gift for a customer who has not bought yet.
   WELCOME
+  /// Standing discount for a pre-platform customer matched by phone.
+  LEGACY
 }
 
 enum CouponType {

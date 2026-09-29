@@ -6,6 +6,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { RedisService } from '../redis/redis.service';
 import { PaymentProofsService } from '../payments/payment-proofs.service';
 import { ProofAlreadyReviewedError } from '../payments/errors/payment-proof.errors';
+import { CustomerModerationService } from '../orders/customer-moderation.service';
 
 /** How long a "link my Telegram" link from the dashboard stays usable. */
 export const STAFF_LINK_TTL_SECONDS = 10 * 60;
@@ -25,6 +26,9 @@ export const REJECT_REASONS = [
   'التحويل موصلش لحسابنا',
   'الإيصال مش خاص بالطلب ده',
 ] as const;
+
+/** Sent to the customer and stored as the ban reason. */
+export const FAKE_PROOF_REASON = 'إيصال مزيف أو تحويل غير حقيقي';
 
 export type ReviewOutcome =
   | { ok: true; staffName: string }
@@ -48,6 +52,7 @@ export class StaffTelegramService {
     private readonly prisma: PrismaService,
     private readonly redis: RedisService,
     private readonly paymentProofs: PaymentProofsService,
+    private readonly moderation: CustomerModerationService,
   ) {}
 
   // ---------------------------------------------------------------------------
@@ -156,6 +161,29 @@ export class StaffTelegramService {
     try {
       await this.paymentProofs.reject(proofId, staff.id, trimmed, false);
       this.logger.log(`Proof ${proofId} rejected from Telegram by staff ${staff.id}`);
+      return { ok: true, staffName: staff.name };
+    } catch (err) {
+      return this.reviewFailure(err);
+    }
+  }
+
+  /**
+   * The screenshot is fake: reject it, cancel the order, and ban the
+   * customer — which also cancels their other unpaid orders. Needs both
+   * review and ban rights, since it does both.
+   */
+  async rejectAsFake(telegramUserId: number, proofId: string): Promise<ReviewOutcome> {
+    const staff = await this.actingStaff(telegramUserId, 'payments.proofs.review');
+    if (!staff) return { ok: false, message: '⛔ حسابك مش مربوط أو مالوش صلاحية مراجعة الدفع.' };
+    if (!can(staff.role as Role, 'customers.ban')) {
+      return { ok: false, message: '⛔ مالكش صلاحية حظر العملاء. ارفض بسبب عادي وبلّغ المالك.' };
+    }
+    const proof = await this.prisma.paymentProof.findUnique({ where: { id: proofId }, select: { customerId: true } });
+    if (!proof) return { ok: false, message: 'الإثبات ده مش موجود.' };
+    try {
+      await this.paymentProofs.reject(proofId, staff.id, FAKE_PROOF_REASON, true);
+      await this.moderation.ban(proof.customerId, staff.id, FAKE_PROOF_REASON);
+      this.logger.warn(`Proof ${proofId} rejected as fake and customer ${proof.customerId} banned by staff ${staff.id}`);
       return { ok: true, staffName: staff.name };
     } catch (err) {
       return this.reviewFailure(err);

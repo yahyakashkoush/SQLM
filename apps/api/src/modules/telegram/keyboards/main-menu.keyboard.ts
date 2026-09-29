@@ -10,6 +10,8 @@ export const MAIN_MENU_LABELS = {
   PAYMENT: '💳 الدفع',
   SUPPORT: '🎫 الدعم',
   ACCOUNT: '👤 حسابي',
+  LEGACY: '🎁 عميل قديم؟',
+  RULES: '📜 الضمان والشروط',
 } as const;
 
 export type MainMenuAction = keyof typeof MAIN_MENU_LABELS;
@@ -46,8 +48,19 @@ export function buildMainMenuKeyboard(): Keyboard {
     .row()
     .text(MAIN_MENU_LABELS.SUPPORT)
     .text(MAIN_MENU_LABELS.ACCOUNT)
+    .row()
+    .text(MAIN_MENU_LABELS.LEGACY)
+    .text(MAIN_MENU_LABELS.RULES)
     .resized()
     .persistent();
+}
+
+/** Telegram fills the number in from the account itself — the customer cannot type someone else's. */
+export const SHARE_PHONE_LABEL = '📱 شارك رقمي';
+export const CANCEL_SHARE_LABEL = '↩️ رجوع للقائمة';
+
+export function buildSharePhoneKeyboard(): Keyboard {
+  return new Keyboard().requestContact(SHARE_PHONE_LABEL).row().text(CANCEL_SHARE_LABEL).resized().oneTime();
 }
 
 export function buildWebAppButton(text: string, url: string): InlineKeyboard {

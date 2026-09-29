@@ -40,15 +40,25 @@ export class LoyaltyService {
   async memberDiscountFor(customerId: string, db: PrismaTx | PrismaService = this.prisma): Promise<MemberDiscount | null> {
     const customer = await db.customer.findUnique({
       where: { id: customerId },
-      select: { verifiedAt: true, welcomeGiftOrderId: true },
+      select: { verifiedAt: true, welcomeGiftOrderId: true, legacyEntry: { select: { discountPercent: true } } },
     });
     if (!customer) return null;
 
+    // A standing discount from either tier; the better one wins, never both.
+    const standing: MemberDiscount[] = [];
+    if (customer.legacyEntry) {
+      const percent =
+        customer.legacyEntry.discountPercent?.toNumber() ??
+        (await this.settings.getNumber('customers.legacyDiscountPercent', db));
+      if (percent > 0) standing.push({ kind: 'LEGACY', percent });
+    }
     if (customer.verifiedAt) {
       const percent = await this.settings.getNumber('customers.verifiedDiscountPercent', db);
-      return percent > 0 ? { kind: 'VERIFIED', percent } : null;
+      if (percent > 0) standing.push({ kind: 'VERIFIED', percent });
     }
-    if (customer.welcomeGiftOrderId) return null;
+    if (standing.length > 0) return standing.reduce((best, d) => (d.percent > best.percent ? d : best));
+    // The welcome gift is for newcomers; an old or verified customer is neither.
+    if (customer.verifiedAt || customer.legacyEntry || customer.welcomeGiftOrderId) return null;
     const percent = await this.settings.getNumber('customers.welcomeGiftPercent', db);
     return percent > 0 ? { kind: 'WELCOME', percent } : null;
   }
@@ -111,25 +121,31 @@ export class LoyaltyService {
   async perksFor(customerId: string) {
     const customer = await this.prisma.customer.findUnique({
       where: { id: customerId },
-      select: { verifiedAt: true, welcomeGiftOrderId: true },
+      select: { verifiedAt: true, welcomeGiftOrderId: true, legacyEntry: { select: { discountPercent: true } } },
     });
     if (!customer) throw new NotFoundException('Customer not found');
 
-    const [verifiedPercent, giftPercent, giftTemplate, store] = await Promise.all([
+    const [verifiedPercent, giftPercent, giftTemplate, store, legacyPercent] = await Promise.all([
       this.settings.getNumber('customers.verifiedDiscountPercent'),
       this.settings.getNumber('customers.welcomeGiftPercent'),
       this.settings.getString('customers.welcomeGiftMessage'),
       this.settings.storeValues(),
+      this.settings.getNumber('customers.legacyDiscountPercent'),
     ]);
 
     const verified = customer.verifiedAt !== null;
+    const legacy = customer.legacyEntry !== null;
     return {
-      tier: verified ? ('VERIFIED' as const) : ('REGULAR' as const),
+      tier: legacy ? ('LEGACY' as const) : verified ? ('VERIFIED' as const) : ('REGULAR' as const),
       verifiedAt: customer.verifiedAt,
       /** The standing discount a verified customer has, or would have. */
       verifiedDiscountPercent: verifiedPercent,
+      /** Set once the customer is matched to the old-customers list. */
+      legacyDiscountPercent: legacy ? (customer.legacyEntry!.discountPercent?.toNumber() ?? legacyPercent) : null,
+      /** An unmatched customer can still claim it from the bot while this is on. */
+      legacyOfferAvailable: !legacy && legacyPercent > 0,
       welcomeGift:
-        !verified && giftPercent > 0
+        !verified && !legacy && giftPercent > 0
           ? {
               percent: giftPercent,
               /** False while an unpaid order is holding it. */

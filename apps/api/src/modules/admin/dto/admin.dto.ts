@@ -39,11 +39,21 @@ export class CustomerQueryDto extends PaginationDto {
   @IsOptional()
   @IsIn(CUSTOMER_SEGMENTS)
   segment?: CustomerSegment;
+
+  @IsOptional()
+  @IsIn(['ACTIVE', 'BANNED'])
+  status?: 'ACTIVE' | 'BANNED';
 }
 
 export class SetCustomerVerifiedDto {
   @IsBoolean()
   verified!: boolean;
+}
+
+export class BanCustomerDto {
+  @IsString()
+  @MaxLength(300)
+  reason!: string;
 }
 
 export class AuditLogQueryDto extends PaginationDto {
