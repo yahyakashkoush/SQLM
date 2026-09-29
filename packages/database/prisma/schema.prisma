@@ -1,0 +1,864 @@
+generator client {
+  provider      = "prisma-client-js"
+  // node:22-slim has OpenSSL 3 but not the `openssl` CLI Prisma probes
+  // with, so detection falls back to the 1.1.x engine and the container
+  // dies with "cannot open shared object file: libssl.so.1.1". Generating
+  // the 3.0.x engine explicitly (and pointing the runtime at it in
+  // apps/api/Dockerfile) is deterministic and needs no extra packages.
+  binaryTargets = ["native", "debian-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// =============================================================================
+// Enums — kept in lockstep with packages/shared/src/enums/*.ts and
+// packages/shared/src/permissions/index.ts. If you change a value here,
+// change it there too.
+// =============================================================================
+
+enum StaffRole {
+  OWNER
+  ADMIN
+  PAYMENT_REVIEWER
+  SUPPORT_AGENT
+  DELIVERY_AGENT
+}
+
+enum StaffStatus {
+  ACTIVE
+  DISABLED
+}
+
+enum CustomerStatus {
+  ACTIVE
+  BANNED
+}
+
+enum CategoryStatus {
+  ACTIVE
+  HIDDEN
+}
+
+enum ProductStatus {
+  DRAFT
+  ACTIVE
+  ARCHIVED
+}
+
+enum ProductVisibility {
+  VISIBLE
+  HIDDEN
+}
+
+/// How a product is delivered. Fully admin-configurable per product — never hardcoded.
+enum DeliveryType {
+  AUTOMATIC
+  MANUAL
+  LICENSE_KEY
+  ACCOUNT
+  VOUCHER
+  CODE
+  CUSTOM
+}
+
+/// What kind of digital good the product represents.
+enum FulfillmentType {
+  ACCOUNT
+  KEY
+  CDK
+  VOUCHER
+  SUBSCRIPTION
+  DIGITAL_FILE
+  MANUAL_SERVICE
+  CUSTOM
+}
+
+/// Whether inventory is tracked as a bare quantity or as individual secret-bearing units.
+enum InventoryMode {
+  QUANTITY
+  INDIVIDUAL
+}
+
+enum InventoryItemStatus {
+  AVAILABLE
+  RESERVED
+  SOLD
+  DELIVERED
+  DISABLED
+}
+
+enum OrderStatus {
+  CREATED
+  PENDING_PAYMENT
+  PAYMENT_SUBMITTED
+  PAYMENT_REVIEW
+  PAID
+  PROCESSING
+  READY_FOR_DELIVERY
+  DELIVERED
+  COMPLETED
+  CANCELLED
+  REFUNDED
+  DISPUTED
+}
+
+enum OrderEventType {
+  STATUS_CHANGED
+  NOTE_ADDED
+  PAYMENT_PROOF_UPLOADED
+  PAYMENT_APPROVED
+  PAYMENT_REJECTED
+  INVENTORY_RESERVED
+  INVENTORY_RELEASED
+  DELIVERY_STARTED
+  DELIVERY_COMPLETED
+  DELIVERY_FAILED
+  CRYPTO_WATCH_OPENED
+  CRYPTO_PAYMENT_DETECTED
+  CRYPTO_WATCH_EXPIRED
+}
+
+enum ActorType {
+  CUSTOMER
+  STAFF
+  SYSTEM
+}
+
+enum PaymentProofStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+/// Who settles a payment method. MANUAL keeps the screenshot-and-review
+/// flow; the exchange providers are watched by the deposit poller and
+/// settle themselves without a human ever looking at the order.
+enum PaymentProvider {
+  MANUAL
+  BINANCE
+  BYBIT
+}
+
+/// Lifecycle of one order's wait for an on-chain deposit.
+enum CryptoWatchStatus {
+  WAITING
+  MATCHED
+  EXPIRED
+  CANCELLED
+}
+
+/// How a given order item actually got fulfilled. Derived from the
+/// product's DeliveryType + InventoryMode at fulfillment time (see
+/// DeliveryService.resolveMethod), not stored on the product — a product
+/// configured AUTOMATIC but backed by QUANTITY stock has no secret to hand
+/// over, so it resolves to MANUAL rather than silently delivering nothing.
+enum DeliveryMethod {
+  AUTOMATIC
+  MANUAL
+}
+
+enum DeliveryStatus {
+  PENDING
+  DELIVERED
+  FAILED
+}
+
+enum TicketStatus {
+  OPEN
+  IN_PROGRESS
+  WAITING_CUSTOMER
+  WAITING_ADMIN
+  RESOLVED
+  CLOSED
+}
+
+enum TicketCategory {
+  ORDER_ISSUE
+  PAYMENT_ISSUE
+  DELIVERY_ISSUE
+  PRODUCT_QUESTION
+  ACCOUNT_ISSUE
+  OTHER
+}
+
+enum TelegramUpdateStatus {
+  PROCESSING
+  COMPLETED
+  FAILED
+}
+
+// =============================================================================
+// Staff / RBAC
+// =============================================================================
+
+model Staff {
+  id             String      @id @default(uuid())
+  email          String      @unique
+  passwordHash   String
+  name           String
+  role           StaffRole
+  status         StaffStatus @default(ACTIVE)
+  lastLoginAt    DateTime?
+  /// Set by tapping the one-time link from the dashboard, which proves the
+  /// Telegram account belongs to this staff member. Payment approvals made
+  /// from Telegram are recorded against this staff row and checked against
+  /// its role, exactly like approvals from the dashboard.
+  telegramId     BigInt?     @unique
+  /// Order, payment and support alerts pushed to the linked chat.
+  telegramNotify Boolean     @default(true)
+  createdAt      DateTime    @default(now())
+  updatedAt      DateTime    @updatedAt
+
+  refreshTokens       StaffRefreshToken[]
+  reviewedProofs      PaymentProof[]      @relation("ProofReviewedBy")
+  assignedTickets     SupportTicket[]     @relation("TicketAssignedTo")
+  authoredMessages    TicketMessage[]     @relation("MessageAuthorStaff")
+  orderEvents         OrderEvent[]        @relation("OrderEventActorStaff")
+  fulfilledDeliveries Delivery[]          @relation("DeliveryFulfilledBy")
+  auditLogs           AuditLog[]
+  updatedSettings     PlatformSetting[]
+  matchedDeposits     CryptoDeposit[]
+
+  @@map("staff")
+}
+
+model StaffRefreshToken {
+  id        String    @id @default(uuid())
+  staffId   String
+  staff     Staff     @relation(fields: [staffId], references: [id], onDelete: Cascade)
+  tokenHash String    @unique
+  expiresAt DateTime
+  revokedAt DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([staffId])
+  @@map("staff_refresh_tokens")
+}
+
+// =============================================================================
+// Customers
+// =============================================================================
+
+model Customer {
+  id                 String         @id @default(uuid())
+  telegramId         BigInt         @unique
+  telegramUsername   String?
+  firstName          String?
+  lastName           String?
+  languageCode       String?
+  status             CustomerStatus @default(ACTIVE)
+  lastSeenAt         DateTime?
+  /// A verified ("مميز وموثّق") customer has completed a paid order. Set by
+  /// the order state machine on the first transition to PAID, never by the
+  /// client; staff can also grant or revoke it. Verified customers get the
+  /// member discount on every order.
+  verifiedAt         DateTime?
+  /// The order that is using this customer's one-time welcome gift. Claimed
+  /// with a conditional UPDATE inside checkout, so two simultaneous orders
+  /// cannot both take it, and released if that order is cancelled.
+  welcomeGiftOrderId String?
+  /// The account's own number, from Telegram's contact-share button (the
+  /// bot checks the contact belongs to the sender). Never typed in.
+  phone              String?
+  bannedAt           DateTime?
+  banReason          String?
+  createdAt          DateTime       @default(now())
+  updatedAt          DateTime       @updatedAt
+
+  orders            Order[]
+  paymentProofs     PaymentProof[]
+  supportTickets    SupportTicket[]
+  ticketMessages    TicketMessage[]    @relation("MessageAuthorCustomer")
+  orderEvents       OrderEvent[]       @relation("OrderEventActorCustomer")
+  couponRedemptions CouponRedemption[]
+  legacyEntry       LegacyCustomer?
+
+  @@index([verifiedAt])
+  @@index([phone])
+  @@map("customers")
+}
+
+/// A customer the store had before this platform, listed by phone number.
+/// Whoever shares that number from their own Telegram account claims the
+/// entry once and gets the old-customer discount on every order.
+model LegacyCustomer {
+  id              String    @id @default(uuid())
+  /// Digits only, international form ("201012345678").
+  phone           String    @unique
+  name            String?
+  /// Overrides the Settings percentage for this one person. Null = use Settings.
+  discountPercent Decimal?  @db.Decimal(5, 2)
+  claimedById     String?   @unique
+  claimedBy       Customer? @relation(fields: [claimedById], references: [id], onDelete: SetNull)
+  claimedAt       DateTime?
+  createdAt       DateTime  @default(now())
+
+  @@map("legacy_customers")
+}
+
+// =============================================================================
+// Catalog
+// =============================================================================
+
+model Category {
+  id           String         @id @default(uuid())
+  slug         String         @unique
+  name         String
+  description  String?
+  image        String?
+  parentId     String?
+  parent       Category?      @relation("CategoryTree", fields: [parentId], references: [id], onDelete: SetNull)
+  children     Category[]     @relation("CategoryTree")
+  displayOrder Int            @default(0)
+  status       CategoryStatus @default(ACTIVE)
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
+
+  products Product[]
+
+  @@index([parentId])
+  @@map("categories")
+}
+
+model Product {
+  id                     String            @id @default(uuid())
+  slug                   String            @unique
+  name                   String
+  shortDescription       String?
+  description            String?
+  categoryId             String?
+  category               Category?         @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  images                 String[]          @default([])
+  price                  Decimal           @db.Decimal(12, 2)
+  compareAtPrice         Decimal?          @db.Decimal(12, 2)
+  currency               String            @default("USD")
+  duration               String?
+  warranty               String?
+  stock                  Int               @default(0)
+  inventoryMode          InventoryMode     @default(QUANTITY)
+  deliveryType           DeliveryType
+  fulfillmentType        FulfillmentType
+  activationInstructions String?
+  deliveryTemplateId     String?
+  deliveryTemplate       DeliveryTemplate? @relation(fields: [deliveryTemplateId], references: [id], onDelete: SetNull)
+  status                 ProductStatus     @default(DRAFT)
+  visibility             ProductVisibility @default(HIDDEN)
+  featured               Boolean           @default(false)
+  tags                   String[]          @default([])
+  metadata               Json?
+  createdAt              DateTime          @default(now())
+  updatedAt              DateTime          @updatedAt
+
+  inventoryItems InventoryItem[]
+  orderItems     OrderItem[]
+
+  @@index([status, visibility, categoryId])
+  @@index([featured])
+  @@map("products")
+}
+
+/// Reusable fulfillment layout. `content` pre-fills the staff member's
+/// delivery form (e.g. "Email:\nPassword:"); `message`, when set, replaces
+/// the store-wide customer delivery message for products using it.
+model DeliveryTemplate {
+  id        String   @id @default(uuid())
+  name      String
+  content   String
+  message   String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  products Product[]
+
+  @@map("delivery_templates")
+}
+
+// =============================================================================
+// Inventory — individual secret-bearing units (accounts, keys, vouchers, ...).
+// For INDIVIDUAL-mode products, available stock is COUNT(status = AVAILABLE),
+// never a separately-stored counter, so it can't drift from reality.
+// =============================================================================
+
+model InventoryItem {
+  id               String              @id @default(uuid())
+  productId        String
+  product          Product             @relation(fields: [productId], references: [id], onDelete: Restrict)
+  encryptedPayload String
+  status           InventoryItemStatus @default(AVAILABLE)
+  reservedAt       DateTime?
+  soldAt           DateTime?
+  deliveredAt      DateTime?
+  disabledReason   String?
+  orderId          String?
+  order            Order?              @relation(fields: [orderId], references: [id], onDelete: SetNull)
+  createdAt        DateTime            @default(now())
+  updatedAt        DateTime            @updatedAt
+
+  @@index([productId, status])
+  @@index([orderId])
+  @@map("inventory_items")
+}
+
+// =============================================================================
+// Orders
+// =============================================================================
+
+model Order {
+  id                 String              @id @default(uuid())
+  sequenceNumber     Int                 @unique @default(autoincrement())
+  customerId         String
+  customer           Customer            @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  status             OrderStatus         @default(CREATED)
+  currency           String              @default("USD")
+  subtotal           Decimal             @db.Decimal(12, 2)
+  /// Everything taken off: the member discount plus the coupon. Zero when
+  /// neither applied, so `total` is always `subtotal - discountTotal` and
+  /// nothing has to special-case it. The coupon's share is
+  /// `discountTotal - memberDiscount`.
+  discountTotal      Decimal             @default(0) @db.Decimal(12, 2)
+  /// The verified-customer discount or the welcome gift, applied before
+  /// the coupon. Which one is in `memberDiscountKind`.
+  memberDiscount     Decimal             @default(0) @db.Decimal(12, 2)
+  memberDiscountKind MemberDiscountKind?
+  total              Decimal             @db.Decimal(12, 2)
+  /// What the customer actually transfers when the payment method is in a
+  /// different currency from the prices (USD prices paid in EGP). Frozen
+  /// at checkout with the rate used, so changing the rate later never
+  /// changes what an existing order asks for. Null when no conversion.
+  payCurrency        String?
+  payAmount          Decimal?            @db.Decimal(14, 2)
+  exchangeRate       Decimal?            @db.Decimal(14, 6)
+  couponId           String?
+  coupon             Coupon?             @relation(fields: [couponId], references: [id], onDelete: SetNull)
+  /// The code as typed, kept even if the coupon is later deleted — an
+  /// order's history must still explain its own price.
+  couponCode         String?
+  paymentMethodId    String?
+  paymentMethod      PaymentMethod?      @relation(fields: [paymentMethodId], references: [id], onDelete: SetNull)
+  idempotencyKey     String
+  cancelReason       String?
+  paidAt             DateTime?
+  deliveredAt        DateTime?
+  completedAt        DateTime?
+  cancelledAt        DateTime?
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime            @updatedAt
+
+  items            OrderItem[]
+  events           OrderEvent[]
+  paymentProofs    PaymentProof[]
+  inventoryItems   InventoryItem[]
+  supportTickets   SupportTicket[]
+  deliveries       Delivery[]
+  cryptoWatch      CryptoPaymentWatch?
+  couponRedemption CouponRedemption?
+
+  @@unique([customerId, idempotencyKey])
+  @@index([customerId, status])
+  @@index([status])
+  @@map("orders")
+}
+
+model OrderItem {
+  id                      String          @id @default(uuid())
+  orderId                 String
+  order                   Order           @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  productId               String
+  product                 Product         @relation(fields: [productId], references: [id], onDelete: Restrict)
+  productNameSnapshot     String
+  deliveryTypeSnapshot    DeliveryType
+  fulfillmentTypeSnapshot FulfillmentType
+  unitPrice               Decimal         @db.Decimal(12, 2)
+  quantity                Int
+  createdAt               DateTime        @default(now())
+
+  delivery Delivery?
+
+  @@index([orderId])
+  @@index([productId])
+  @@map("order_items")
+}
+
+model OrderEvent {
+  id              String         @id @default(uuid())
+  orderId         String
+  order           Order          @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  type            OrderEventType
+  fromStatus      OrderStatus?
+  toStatus        OrderStatus?
+  actorType       ActorType
+  actorStaffId    String?
+  actorStaff      Staff?         @relation("OrderEventActorStaff", fields: [actorStaffId], references: [id], onDelete: SetNull)
+  actorCustomerId String?
+  actorCustomer   Customer?      @relation("OrderEventActorCustomer", fields: [actorCustomerId], references: [id], onDelete: SetNull)
+  note            String?
+  metadata        Json?
+  createdAt       DateTime       @default(now())
+
+  @@index([orderId])
+  @@map("order_events")
+}
+
+/// One fulfillment record per order item. `encryptedContent` uses the same
+/// AES-256-GCM wire format as InventoryItem.encryptedPayload, so delivered
+/// credentials are never at rest in plaintext. The unique constraint on
+/// orderItemId is what makes re-running a delivery job a no-op instead of a
+/// second delivery.
+model Delivery {
+  id                 String         @id @default(uuid())
+  orderId            String
+  order              Order          @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  orderItemId        String         @unique
+  orderItem          OrderItem      @relation(fields: [orderItemId], references: [id], onDelete: Cascade)
+  inventoryItemIds   String[]       @default([])
+  method             DeliveryMethod
+  status             DeliveryStatus @default(PENDING)
+  encryptedContent   String?
+  note               String?
+  attempts           Int            @default(0)
+  lastError          String?
+  deliveredAt        DateTime?
+  deliveredByStaffId String?
+  deliveredByStaff   Staff?         @relation("DeliveryFulfilledBy", fields: [deliveredByStaffId], references: [id], onDelete: SetNull)
+  createdAt          DateTime       @default(now())
+  updatedAt          DateTime       @updatedAt
+
+  @@index([orderId])
+  @@index([status, method])
+  @@map("deliveries")
+}
+
+// =============================================================================
+// Payments
+// =============================================================================
+
+model PaymentMethod {
+  id            String   @id @default(uuid())
+  name          String
+  description   String?
+  accountNumber String?
+  instructions  String?
+  qrCodeUrl     String?
+  currency      String   @default("USD")
+  enabled       Boolean  @default(true)
+  displayOrder  Int      @default(0)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  /// MANUAL keeps the proof-upload flow. An exchange provider makes this
+  /// method self-settling: checkout opens a CryptoPaymentWatch and the
+  /// deposit poller marks the order PAID on its own.
+  provider        PaymentProvider @default(MANUAL)
+  /// Ticker as the exchange reports it on a deposit record, e.g. "USDT".
+  cryptoAsset     String?
+  /// Exchange network code, e.g. "TRX", "BSC", "ETH". Deposits are matched
+  /// on it too: the same asset on the wrong chain must not settle an order.
+  cryptoNetwork   String?
+  /// Where the customer sends funds. Display-only — matching keys off the
+  /// amount, so a wrong address simply never matches rather than mispaying.
+  depositAddress  String?
+  /// How long a customer has to send the exact amount before the watch
+  /// expires and releases its amount back into the pool.
+  watchTtlMinutes Int             @default(60)
+
+  orders  Order[]
+  watches CryptoPaymentWatch[]
+
+  @@map("payment_methods")
+}
+
+/// One order's wait for an exact on-chain amount.
+///
+/// Deposits arrive with no order reference — an exchange deposit record
+/// carries an address, an asset and an amount, nothing that ties it to a
+/// cart. So the amount itself is the correlation key: each waiting order
+/// gets an amount no other waiting order is using, and a deposit of that
+/// amount can only belong to that order.
+model CryptoPaymentWatch {
+  id              String            @id @default(uuid())
+  orderId         String            @unique
+  order           Order             @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  paymentMethodId String
+  paymentMethod   PaymentMethod     @relation(fields: [paymentMethodId], references: [id], onDelete: Restrict)
+  provider        PaymentProvider
+  asset           String
+  network         String
+  address         String
+  /// What the customer was told to send, to 8dp. Never the order total
+  /// verbatim: a unique delta is baked in so it identifies this order.
+  expectedAmount  Decimal           @db.Decimal(24, 8)
+  status          CryptoWatchStatus @default(WAITING)
+  expiresAt       DateTime
+  /// How many times the customer pushed the deadline out. Bounded, so a
+  /// page left open cannot hold an amount out of the pool forever.
+  extensionsUsed  Int               @default(0)
+  matchedAt       DateTime?
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+
+  /// The uniqueness guarantee, enforced by the database rather than by the
+  /// allocator's read-then-write. Holds "provider:asset:network:amount"
+  /// while WAITING and NULL once settled — Postgres treats NULLs as
+  /// distinct, so any number of past watches may share an amount while at
+  /// most one live watch can claim it. Two concurrent checkouts racing for
+  /// the same amount: one inserts, the other hits the unique violation and
+  /// retries with the next candidate.
+  claimKey String? @unique
+
+  deposits CryptoDeposit[]
+
+  @@index([status, expiresAt])
+  @@index([provider, status])
+  @@map("crypto_payment_watches")
+}
+
+/// Every deposit the poller has ever seen, matched or not.
+///
+/// The (provider, txId) unique constraint is what makes crediting
+/// exactly-once: the poller inserts the row before acting on it, so a
+/// deposit replayed by an overlapping poll, an exchange returning it in
+/// two pages, or a worker retried after a crash all collide here and the
+/// second attempt is a no-op rather than a second payment.
+model CryptoDeposit {
+  id               String              @id @default(uuid())
+  provider         PaymentProvider
+  /// The exchange's transaction id. Unique per provider, not globally.
+  txId             String
+  asset            String
+  network          String
+  amount           Decimal             @db.Decimal(24, 8)
+  address          String?
+  /// The provider's own status string, kept verbatim for support triage.
+  rawStatus        String?
+  creditedAt       DateTime?
+  watchId          String?
+  watch            CryptoPaymentWatch? @relation(fields: [watchId], references: [id], onDelete: SetNull)
+  orderId          String?
+  seenAt           DateTime            @default(now())
+  /// When staff were told this deposit arrived and matched nothing. Set
+  /// once so the sweep alerts on a stranded payment exactly one time
+  /// instead of every 40 seconds until someone resolves it.
+  alertedAt        DateTime?
+  /// Who credited it by hand, when the amount matched no watch.
+  matchedByStaffId String?
+  matchedByStaff   Staff?              @relation(fields: [matchedByStaffId], references: [id], onDelete: SetNull)
+
+  @@unique([provider, txId])
+  @@index([watchId])
+  @@index([seenAt])
+  @@index([creditedAt, alertedAt])
+  @@map("crypto_deposits")
+}
+
+model PaymentProof {
+  id              String             @id @default(uuid())
+  orderId         String
+  order           Order              @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  customerId      String
+  customer        Customer           @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  telegramFileId  String?
+  storageKey      String
+  mimeType        String
+  fileSize        Int
+  status          PaymentProofStatus @default(PENDING)
+  rejectionReason String?
+  internalNote    String?
+  reviewedById    String?
+  reviewedBy      Staff?             @relation("ProofReviewedBy", fields: [reviewedById], references: [id], onDelete: SetNull)
+  reviewedAt      DateTime?
+  uploadedAt      DateTime           @default(now())
+  /// SHA-256 of the file. The same screenshot turning up on another order
+  /// is the commonest fake-payment trick, and this is how it is caught.
+  contentHash     String?
+
+  @@index([orderId, status])
+  @@index([status])
+  @@index([contentHash])
+  @@map("payment_proofs")
+}
+
+// =============================================================================
+// Support
+// =============================================================================
+
+model SupportTicket {
+  id              String         @id @default(uuid())
+  ticketNumber    Int            @unique @default(autoincrement())
+  customerId      String
+  customer        Customer       @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  subject         String
+  category        TicketCategory @default(OTHER)
+  status          TicketStatus   @default(OPEN)
+  orderId         String?
+  order           Order?         @relation(fields: [orderId], references: [id], onDelete: SetNull)
+  assignedStaffId String?
+  assignedStaff   Staff?         @relation("TicketAssignedTo", fields: [assignedStaffId], references: [id], onDelete: SetNull)
+  /// Unread counters are maintained atomically alongside message inserts
+  /// (increment for the other side, reset to 0 for the author's side), so a
+  /// badge count never needs a COUNT(*) over messages on every list call.
+  customerUnread  Int            @default(0)
+  staffUnread     Int            @default(0)
+  lastMessageAt   DateTime?
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+  closedAt        DateTime?
+
+  messages TicketMessage[]
+
+  @@index([customerId, status])
+  @@index([status])
+  @@map("support_tickets")
+}
+
+model TicketMessage {
+  id               String        @id @default(uuid())
+  ticketId         String
+  ticket           SupportTicket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  authorType       ActorType
+  authorStaffId    String?
+  authorStaff      Staff?        @relation("MessageAuthorStaff", fields: [authorStaffId], references: [id], onDelete: SetNull)
+  authorCustomerId String?
+  authorCustomer   Customer?     @relation("MessageAuthorCustomer", fields: [authorCustomerId], references: [id], onDelete: SetNull)
+  message          String
+  attachments      Json?
+  internal         Boolean       @default(false)
+  createdAt        DateTime      @default(now())
+
+  @@index([ticketId])
+  @@map("ticket_messages")
+}
+
+// =============================================================================
+// Platform-wide config (admin-managed, avoids hardcoded settings)
+// =============================================================================
+
+model PlatformSetting {
+  key              String   @id
+  value            Json
+  updatedAt        DateTime @updatedAt
+  updatedByStaffId String?
+  updatedByStaff   Staff?   @relation(fields: [updatedByStaffId], references: [id], onDelete: SetNull)
+
+  @@map("platform_settings")
+}
+
+// =============================================================================
+// Audit trail (admin/staff mutations)
+// =============================================================================
+
+model AuditLog {
+  id           String   @id @default(uuid())
+  actorStaffId String?
+  actorStaff   Staff?   @relation(fields: [actorStaffId], references: [id], onDelete: SetNull)
+  action       String
+  entityType   String
+  entityId     String
+  changes      Json?
+  ipAddress    String?
+  createdAt    DateTime @default(now())
+
+  @@index([entityType, entityId])
+  @@index([createdAt])
+  @@map("audit_logs")
+}
+
+// =============================================================================
+// Telegram webhook idempotency ledger (second line of defense behind Redis SETNX)
+// =============================================================================
+
+model TelegramUpdateLog {
+  id          String               @id @default(uuid())
+  updateId    BigInt               @unique
+  status      TelegramUpdateStatus @default(PROCESSING)
+  error       String?
+  receivedAt  DateTime             @default(now())
+  processedAt DateTime?
+
+  @@map("telegram_update_log")
+}
+
+enum MemberDiscountKind {
+  /// Standing discount for a customer who has completed a paid order.
+  VERIFIED
+  /// One-time first-order gift for a customer who has not bought yet.
+  WELCOME
+  /// Standing discount for a pre-platform customer matched by phone.
+  LEGACY
+}
+
+enum CouponType {
+  /// `value` is a percentage of the subtotal, 1–100.
+  PERCENT
+  /// `value` is a flat amount in the store's currency.
+  FIXED
+}
+
+/// A redeemable discount code.
+///
+/// Every limit is optional except the per-customer one, so the same model
+/// covers a public launch code, a one-off apology to a single customer, and
+/// a capped campaign — without three tables or a `kind` column that changes
+/// what the other fields mean.
+model Coupon {
+  id    String     @id @default(uuid())
+  /// Always stored upper-cased; lookups upper-case the input to match, so
+  /// "welcome10" and "WELCOME10" are the same code and cannot both exist.
+  code  String     @unique
+  type  CouponType
+  value Decimal    @db.Decimal(12, 2)
+
+  /// Orders under this subtotal cannot use the code.
+  minSubtotal      Decimal? @db.Decimal(12, 2)
+  /// PERCENT only: the ceiling on what a large order can take off.
+  maxDiscount      Decimal? @db.Decimal(12, 2)
+  /// Total redemptions across everyone. NULL means unlimited.
+  maxRedemptions   Int?
+  /// How many times one customer may use it.
+  perCustomerLimit Int      @default(1)
+
+  startsAt DateTime?
+  endsAt   DateTime?
+  active   Boolean   @default(true)
+
+  /// Denormalised count, incremented under the same guard that inserts the
+  /// redemption, so the global cap can be enforced without counting rows.
+  timesRedeemed Int @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  redemptions CouponRedemption[]
+  orders      Order[]
+
+  @@index([active, endsAt])
+  @@map("coupons")
+}
+
+/// One coupon use. The unique on orderId is what makes redemption
+/// exactly-once: a retried checkout cannot spend the same code twice.
+model CouponRedemption {
+  id          String   @id @default(uuid())
+  couponId    String
+  coupon      Coupon   @relation(fields: [couponId], references: [id], onDelete: Cascade)
+  customerId  String
+  customer    Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  orderId     String   @unique
+  order       Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  /// What this particular redemption was worth, for reporting.
+  amount      Decimal  @db.Decimal(12, 2)
+  /// This customer's ordinal use of this coupon (highest so far + 1).
+  /// Counting rows and then inserting would let two concurrent checkouts
+  /// both see "used 0 times"; making the ordinal part of a unique index
+  /// means the loser of that race hits a constraint instead of a second
+  /// free discount. Not count + 1: a cancelled order hands its use back by
+  /// deleting its row, which can leave a gap below the highest ordinal.
+  customerSeq Int
+  createdAt   DateTime @default(now())
+
+  @@unique([couponId, customerId, customerSeq])
+  @@index([couponId, customerId])
+  @@map("coupon_redemptions")
+}
