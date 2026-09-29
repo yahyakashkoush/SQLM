@@ -99,9 +99,11 @@ describe('Crypto auto-payments (e2e)', () => {
   }
 
   /** Any seeded staff row — manual matching records who did it. */
+  // Suites run in parallel on one database: borrowing another suite's staff
+  // row lets its teardown null out matchedByStaffId mid-test.
+  let staffId: string;
   async function anyStaffId() {
-    const staff = await prisma.staff.findFirst({ select: { id: true } });
-    return staff?.id;
+    return staffId;
   }
 
   beforeAll(async () => {
@@ -162,6 +164,17 @@ describe('Crypto auto-payments (e2e)', () => {
       data: { name: 'Bank transfer', currency: 'USD', enabled: true, provider: 'MANUAL' },
     });
     manualMethodId = manualMethod.id;
+
+    const staff = await prisma.staff.create({
+      data: {
+        email: `crypto-e2e-${Date.now()}@sqlm.test`,
+        passwordHash: 'x',
+        name: 'Crypto E2E',
+        role: 'ADMIN',
+        status: 'ACTIVE',
+      },
+    });
+    staffId = staff.id;
   });
 
   afterAll(async () => {
@@ -177,6 +190,7 @@ describe('Crypto auto-payments (e2e)', () => {
     await prisma.paymentMethod.deleteMany({
       where: { id: { in: [cryptoMethodId, manualMethodId] } },
     });
+    await prisma.staff.deleteMany({ where: { id: staffId } });
     await app.close();
   });
 
