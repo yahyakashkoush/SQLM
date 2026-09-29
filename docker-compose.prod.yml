@@ -183,6 +183,7 @@ services:
       ADMIN_DOMAIN: ${ADMIN_DOMAIN:?ADMIN_DOMAIN is required}
       MINIAPP_DOMAIN: ${MINIAPP_DOMAIN:?MINIAPP_DOMAIN is required}
       WEB_DOMAIN: ${WEB_DOMAIN:?WEB_DOMAIN is required}
+      ACME_EMAIL: ${ACME_EMAIL:-admin@example.com}
     depends_on:
       - api
       - admin
