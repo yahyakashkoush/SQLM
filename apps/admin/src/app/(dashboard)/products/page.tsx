@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Badge, Button, Card, CardContent, Input } from '@sqlm/ui';
-import { api, type AdminProduct } from '@/lib/api';
+import { api, ApiError, type AdminProduct } from '@/lib/api';
 import { PageHeader } from '@/components/layout/page-header';
 import { DataTable } from '@/components/data-table';
 import { Select } from '@/components/form';
@@ -44,6 +44,12 @@ export default function ProductsPage() {
     onSuccess: refresh,
   });
   const archive = useMutation({ mutationFn: (id: string) => api.deleteProduct(id), onSuccess: refresh });
+  const destroy = useMutation({
+    mutationFn: (id: string) => api.deleteProductPermanently(id),
+    onSuccess: refresh,
+    // 409: orders still reference it — the message says to delete those first or archive.
+    onError: (err) => window.alert(err instanceof ApiError ? err.message : 'Delete failed'),
+  });
 
   if (editing) {
     return (
@@ -197,6 +203,25 @@ export default function ProductsPage() {
                       }}
                     >
                       Archive
+                    </Button>
+                  )}
+                  {can('products.delete') && (
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="text-destructive"
+                      disabled={destroy.isPending}
+                      onClick={() => {
+                        if (
+                          window.confirm(
+                            `Delete "${p.name}" forever, with all its stock? Only possible when no order contains it.`,
+                          )
+                        ) {
+                          destroy.mutate(p.id);
+                        }
+                      }}
+                    >
+                      Delete
                     </Button>
                   )}
                 </div>

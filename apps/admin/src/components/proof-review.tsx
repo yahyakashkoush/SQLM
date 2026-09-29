@@ -7,6 +7,7 @@ import { api, ApiError } from '@/lib/api';
 import { useAuthStore } from '@/store/auth-store';
 
 const QUICK_REASONS = ['المبلغ غير صحيح', 'الإيصال غير واضح', 'لم يتم استلام التحويل', 'إيصال مكرر'];
+const FAKE_REASON = 'إيصال مزيف أو تحويل غير حقيقي';
 
 /** Shows a proof through a short-lived signed link and, while pending, the approve/reject controls. */
 export function ProofReview({
@@ -30,6 +31,9 @@ export function ProofReview({
     queryFn: () => api.proofViewUrl(proofId),
     staleTime: 5 * 60_000,
   });
+  // The API's risk read: a reused screenshot, earlier rejections, a brand-new account.
+  const { data: detail } = useQuery({ queryKey: ['payment-proof', proofId], queryFn: () => api.paymentProof(proofId) });
+  const flags = detail?.risk?.flags ?? [];
 
   const done = () => {
     setReason('');
@@ -48,9 +52,27 @@ export function ProofReview({
     onSuccess: done,
     onError: fail,
   });
+  const rejectAsFake = useMutation({
+    mutationFn: async () => {
+      await api.rejectProof(proofId, FAKE_REASON, true);
+      if (detail?.customerId) await api.banCustomer(detail.customerId, FAKE_REASON);
+    },
+    onSuccess: done,
+    onError: fail,
+  });
 
   return (
     <div className="space-y-3">
+      {flags.length > 0 ? (
+        <ul className="space-y-1 rounded-md border border-destructive/40 bg-destructive/5 p-3 text-sm" dir="rtl">
+          {flags.map((f) => (
+            <li key={f}>{f}</li>
+          ))}
+        </ul>
+      ) : (
+        detail?.risk && <p className="text-xs text-muted-foreground">✅ No risk signals on this customer.</p>
+      )}
+
       {isLoading ? (
         <p className="text-xs text-muted-foreground">Loading proof…</p>
       ) : isError || !view ? (
@@ -107,6 +129,19 @@ export function ProofReview({
             >
               Reject &amp; cancel order
             </Button>
+            {can('customers.ban') && (
+              <Button
+                size="sm"
+                variant="destructive"
+                disabled={rejectAsFake.isPending || reject.isPending || !detail}
+                onClick={() =>
+                  window.confirm('Fake receipt: reject it, cancel the order and BAN this customer from the store?') &&
+                  rejectAsFake.mutate()
+                }
+              >
+                🚫 Fake — reject &amp; ban
+              </Button>
+            )}
           </div>
           {error && <p className="text-sm text-destructive">{error}</p>}
         </>

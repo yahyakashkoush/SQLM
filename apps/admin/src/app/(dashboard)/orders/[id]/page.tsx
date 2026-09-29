@@ -2,6 +2,7 @@
 
 import { use, useState } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ORDER_STATUS_LABELS_AR, ORDER_TRANSITIONS, type OrderStatus } from '@sqlm/shared';
 import { Badge, Button, Card, CardContent, Input, Separator } from '@sqlm/ui';
@@ -67,6 +68,22 @@ export default function OrderDetailPage({ params }: { params: Promise<{ id: stri
     onSuccess: () => setTimeout(refresh, 1500),
   });
 
+  const router = useRouter();
+  const remove = useMutation({
+    mutationFn: (restock: boolean) => api.deleteOrder(id, restock),
+    onSuccess: () => {
+      refresh();
+      router.push('/orders');
+    },
+    onError: (err) => setError(err instanceof ApiError ? err.message : 'Delete failed'),
+  });
+  const confirmDelete = (paid: boolean) => {
+    if (!window.confirm(`Permanently delete order #${order?.sequenceNumber}? This cannot be undone.`)) return;
+    // Unpaid orders always give their stock back; a paid one only if this was a test.
+    const restock = paid && window.confirm('This order was paid. Put its items back in stock too (test order)?');
+    remove.mutate(restock);
+  };
+
   if (isLoading) return <p className="text-sm text-muted-foreground">Loading order…</p>;
   if (!order) return <p className="text-sm text-muted-foreground">Order not found.</p>;
 
@@ -80,9 +97,22 @@ export default function OrderDetailPage({ params }: { params: Promise<{ id: stri
         title={`Order #${order.sequenceNumber}`}
         description={`Placed ${new Date(order.createdAt).toLocaleString()}`}
         action={
-          <Badge variant={statusVariant(order.status)} className="text-sm">
-            {order.status.replace(/_/g, ' ').toLowerCase()} · {ORDER_STATUS_LABELS_AR[order.status as OrderStatus]}
-          </Badge>
+          <div className="flex items-center gap-2">
+            <Badge variant={statusVariant(order.status)} className="text-sm">
+              {order.status.replace(/_/g, ' ').toLowerCase()} · {ORDER_STATUS_LABELS_AR[order.status as OrderStatus]}
+            </Badge>
+            {can('orders.delete') && (
+              <Button
+                size="sm"
+                variant="outline"
+                className="text-destructive"
+                disabled={remove.isPending}
+                onClick={() => confirmDelete(Boolean(order.paidAt))}
+              >
+                Delete order
+              </Button>
+            )}
+          </div>
         }
       />
 

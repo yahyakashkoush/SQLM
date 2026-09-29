@@ -3,14 +3,23 @@
 import { use, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useQueryClient } from '@tanstack/react-query';
-import { CheckCircle2, Clock, LifeBuoy, Loader2, PackageCheck, Upload, XCircle } from 'lucide-react';
+import {
+  CheckCircle2,
+  Clock,
+  LifeBuoy,
+  Loader2,
+  PackageCheck,
+  Upload,
+  XCircle,
+} from 'lucide-react';
 import { Button, Card, CardContent, Separator } from '@sqlm/ui';
 import type { OrderStatus } from '@sqlm/shared';
-import { useDeliveries, useOrder } from '@/lib/queries';
+import { useDeliveries, useOrder, useStoreInfo } from '@/lib/queries';
 import { OrderStatusBadge } from '@/components/orders/order-status-badge';
 import { CopyButton } from '@/components/copy-button';
 import { CryptoPaymentCard } from '@/components/orders/crypto-payment-card';
 import { api, ApiError } from '@/lib/api';
+import { MEMBER_DISCOUNT_LABELS } from '@/types/api';
 import { formatDate, formatMoney } from '@/lib/format';
 
 const STATUS_HELP: Record<OrderStatus, string> = {
@@ -39,7 +48,13 @@ export default function OrderDetailPage({ params }: { params: Promise<{ id: stri
   const { id } = use(params);
   const queryClient = useQueryClient();
   const { data: order, isLoading, refetch } = useOrder(id);
-  const hasDeliveries = Boolean(order && ['PROCESSING', 'READY_FOR_DELIVERY', 'DELIVERED', 'COMPLETED', 'DISPUTED'].includes(order.status));
+  const { data: store } = useStoreInfo();
+  const hasDeliveries = Boolean(
+    order &&
+    ['PROCESSING', 'READY_FOR_DELIVERY', 'DELIVERED', 'COMPLETED', 'DISPUTED'].includes(
+      order.status,
+    ),
+  );
   const deliveries = useDeliveries(id, hasDeliveries);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
@@ -63,7 +78,8 @@ export default function OrderDetailPage({ params }: { params: Promise<{ id: stri
   const couponShare = Number(order.discountTotal) - Number(order.memberDiscount ?? 0);
   const isCrypto = Boolean(method?.provider && method.provider !== 'MANUAL');
   const lastProof = order.paymentProofs?.[0];
-  const rejected = order.status === 'PENDING_PAYMENT' && lastProof?.status === 'REJECTED' ? lastProof : null;
+  const rejected =
+    order.status === 'PENDING_PAYMENT' && lastProof?.status === 'REJECTED' ? lastProof : null;
   const stepIndex = STEPS.findIndex((s) => s.statuses.includes(order.status));
   const closed = ['CANCELLED', 'REFUNDED'].includes(order.status);
 
@@ -90,7 +106,15 @@ export default function OrderDetailPage({ params }: { params: Promise<{ id: stri
       await refetch();
       void queryClient.invalidateQueries({ queryKey: ['orders'] });
     } catch (err) {
-      setUploadError(err instanceof ApiError ? err.message : 'فشل رفع الملف، حاول مرة أخرى.');
+      setUploadError(
+        err instanceof ApiError && err.code === 'TOO_MANY_PROOFS'
+          ? 'وصلت للحد الأقصى من محاولات رفع الإيصال للطلب ده. كلّم الدعم وهنراجع معاك.'
+          : err instanceof ApiError && err.status === 413
+            ? 'الملف كبير جداً — ابعت صورة أصغر من 10 ميجا.'
+            : err instanceof ApiError
+              ? err.message
+              : 'فشل رفع الملف، حاول مرة أخرى.',
+      );
     } finally {
       setUploading(false);
       if (fileInputRef.current) fileInputRef.current.value = '';
@@ -111,8 +135,14 @@ export default function OrderDetailPage({ params }: { params: Promise<{ id: stri
         <div className="flex items-center gap-1">
           {STEPS.map((step, i) => (
             <div key={step.label} className="flex flex-1 flex-col items-center gap-1">
-              <div className={`h-1.5 w-full rounded-full ${i <= stepIndex ? 'bg-primary' : 'bg-muted'}`} />
-              <span className={`text-[11px] ${i <= stepIndex ? 'text-foreground' : 'text-muted-foreground'}`}>{step.label}</span>
+              <div
+                className={`h-1.5 w-full rounded-full ${i <= stepIndex ? 'bg-primary' : 'bg-muted'}`}
+              />
+              <span
+                className={`text-[11px] ${i <= stepIndex ? 'text-foreground' : 'text-muted-foreground'}`}
+              >
+                {step.label}
+              </span>
             </div>
           ))}
         </div>
@@ -129,7 +159,9 @@ export default function OrderDetailPage({ params }: { params: Promise<{ id: stri
           <XCircle className="mt-0.5 h-4 w-4 shrink-0 text-destructive" />
           <div>
             <p className="font-medium text-destructive">تم رفض إثبات الدفع السابق</p>
-            {rejected.rejectionReason && <p className="text-xs">السبب: {rejected.rejectionReason}</p>}
+            {rejected.rejectionReason && (
+              <p className="text-xs">السبب: {rejected.rejectionReason}</p>
+            )}
             <p className="text-xs text-muted-foreground">ارفع إثبات دفع جديد من تحت.</p>
           </div>
         </div>
@@ -157,13 +189,20 @@ export default function OrderDetailPage({ params }: { params: Promise<{ id: stri
                 </div>
                 {d.content && (
                   <>
-                    <pre dir="auto" className="whitespace-pre-wrap break-all rounded-md bg-muted p-3 font-mono text-sm">
+                    <pre
+                      dir="auto"
+                      className="whitespace-pre-wrap break-all rounded-md bg-muted p-3 font-mono text-sm"
+                    >
                       {d.content}
                     </pre>
                     <CopyButton value={d.content} label="نسخ البيانات" />
                   </>
                 )}
-                {d.deliveredAt && <p className="text-[11px] text-muted-foreground">سُلّم في {formatDate(d.deliveredAt)}</p>}
+                {d.deliveredAt && (
+                  <p className="text-[11px] text-muted-foreground">
+                    سُلّم في {formatDate(d.deliveredAt)}
+                  </p>
+                )}
               </div>
             ))}
           </CardContent>
@@ -177,7 +216,11 @@ export default function OrderDetailPage({ params }: { params: Promise<{ id: stri
               <span className="flex items-center gap-2">
                 {item.product?.images[0] && (
                   // eslint-disable-next-line @next/next/no-img-element -- admin-configured storage host
-                  <img src={item.product.images[0]} alt="" className="h-8 w-8 rounded object-cover" />
+                  <img
+                    src={item.product.images[0]}
+                    alt=""
+                    className="h-8 w-8 rounded object-cover"
+                  />
                 )}
                 {item.productNameSnapshot} × {item.quantity}
               </span>
@@ -193,7 +236,12 @@ export default function OrderDetailPage({ params }: { params: Promise<{ id: stri
               </div>
               {Number(order.memberDiscount) > 0 && (
                 <div className="flex items-center justify-between text-sm text-success">
-                  <span>{order.memberDiscountKind === 'WELCOME' ? '🎁 هدية أول طلب' : '⭐ خصم العميل المميز'}</span>
+                  <span>
+                    {order.memberDiscountKind === 'WELCOME' ? '🎁 ' : '⭐ '}
+                    {order.memberDiscountKind
+                      ? MEMBER_DISCOUNT_LABELS[order.memberDiscountKind]
+                      : ''}
+                  </span>
                   <span>−{formatMoney(order.memberDiscount, order.currency)}</span>
                 </div>
               )}
@@ -242,19 +290,32 @@ export default function OrderDetailPage({ params }: { params: Promise<{ id: stri
                   <div className="flex items-center justify-between gap-2 rounded-lg bg-muted p-3">
                     <div className="min-w-0">
                       <p className="text-xs text-muted-foreground">حوّل على</p>
-                      <p dir="ltr" className="break-all text-start font-mono text-base font-semibold">
+                      <p
+                        dir="ltr"
+                        className="break-all text-start font-mono text-base font-semibold"
+                      >
                         {method.accountNumber}
                       </p>
                     </div>
                     <CopyButton value={method.accountNumber} />
                   </div>
                 )}
-                {method.instructions && <p className="whitespace-pre-line text-sm text-muted-foreground">{method.instructions}</p>}
+                {method.instructions && (
+                  <p className="whitespace-pre-line text-sm text-muted-foreground">
+                    {method.instructions}
+                  </p>
+                )}
                 {method.qrCodeUrl && (
                   // eslint-disable-next-line @next/next/no-img-element -- admin-configured storage host
-                  <img src={method.qrCodeUrl} alt="QR" className="mx-auto h-48 w-48 rounded-lg border object-contain" />
+                  <img
+                    src={method.qrCodeUrl}
+                    alt="QR"
+                    className="mx-auto h-48 w-48 rounded-lg border object-contain"
+                  />
                 )}
-                <p className="text-xs text-muted-foreground">اكتب رقم الطلب #{order.sequenceNumber} في ملاحظة التحويل لو متاح.</p>
+                <p className="text-xs text-muted-foreground">
+                  اكتب رقم الطلب #{order.sequenceNumber} في ملاحظة التحويل لو متاح.
+                </p>
               </CardContent>
             </Card>
           )}
@@ -280,17 +341,28 @@ export default function OrderDetailPage({ params }: { params: Promise<{ id: stri
                 }}
               />
               <Button disabled={uploading} onClick={() => fileInputRef.current?.click()}>
-                {uploading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
+                {uploading ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Upload className="h-4 w-4" />
+                )}
                 {uploading ? 'جاري الرفع…' : 'اختار صورة الإيصال'}
               </Button>
               {uploadError && <p className="text-xs text-destructive">{uploadError}</p>}
+              {store?.proofWarning && (
+                <p className="rounded-md bg-destructive/5 p-2 text-xs text-destructive">
+                  {store.proofWarning}
+                </p>
+              )}
             </CardContent>
           </Card>
         </>
       )}
 
       {lastProof && order.status !== 'PENDING_PAYMENT' && lastProof.status === 'PENDING' && (
-        <p className="text-center text-xs text-muted-foreground">تم رفع إثبات الدفع {formatDate(lastProof.uploadedAt)}</p>
+        <p className="text-center text-xs text-muted-foreground">
+          تم رفع إثبات الدفع {formatDate(lastProof.uploadedAt)}
+        </p>
       )}
 
       {/* Only before a proof is in. Past that a transfer may already have
@@ -302,8 +374,7 @@ export default function OrderDetailPage({ params }: { params: Promise<{ id: stri
               <>
                 <p className="text-sm font-medium">متأكد إنك عايز تلغي الطلب ده؟</p>
                 <p className="text-xs text-muted-foreground">
-                  المنتجات هترجع متاحة لغيرك، ومش هتقدر ترجّع الطلب ده تاني — هتحتاج تطلبه من
-                  الأول.
+                  المنتجات هترجع متاحة لغيرك، ومش هتقدر ترجّع الطلب ده تاني — هتحتاج تطلبه من الأول.
                 </p>
                 <div className="flex gap-2">
                   <Button
@@ -334,7 +405,10 @@ export default function OrderDetailPage({ params }: { params: Promise<{ id: stri
         </Card>
       )}
 
-      <Link href={`/support?order=${order.id}`} className="flex items-center justify-center gap-2 py-2 text-sm text-primary">
+      <Link
+        href={`/support?order=${order.id}`}
+        className="flex items-center justify-center gap-2 py-2 text-sm text-primary"
+      >
         <LifeBuoy className="h-4 w-4" /> محتاج مساعدة في الطلب ده؟
       </Link>
     </main>

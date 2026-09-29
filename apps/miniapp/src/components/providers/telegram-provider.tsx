@@ -70,7 +70,14 @@ export function TelegramProvider({ children }: { children: React.ReactNode }) {
         setReady(true);
       })
       .catch((err: unknown) => {
-        setAuthError(err instanceof ApiError ? err.message : 'تعذر تسجيل الدخول، أعد فتح التطبيق.');
+        const suspended = err instanceof ApiError && /suspended|not active/i.test(err.message);
+        setAuthError(
+          suspended
+            ? '🚫 حسابك في المتجر موقوف بسبب مخالفة شروط الاستخدام. للاستفسار تواصل مع الدعم.'
+            : err instanceof ApiError
+              ? err.message
+              : 'تعذر تسجيل الدخول، أعد فتح التطبيق.',
+        );
         setReady(true);
       });
   }, [scriptLoaded, hasSession, setSession]);

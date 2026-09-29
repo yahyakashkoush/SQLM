@@ -89,6 +89,9 @@ export const api = {
   createProduct: (body: unknown) => post<AdminProduct>('/admin/products', body),
   updateProduct: (id: string, body: unknown) => patch<AdminProduct>(`/admin/products/${id}`, body),
   deleteProduct: (id: string) => del(`/admin/products/${id}`),
+  /** Gone for good with its stock; refused (409) while any order references it. */
+  deleteProductPermanently: (id: string) =>
+    del<{ id: string; deletedInventory: number }>(`/admin/products/${id}/permanent`),
 
   categories: () => get<AdminCategory[]>('/admin/categories'),
   createCategory: (body: unknown) => post<AdminCategory>('/admin/categories', body),
@@ -128,6 +131,13 @@ export const api = {
     patch(`/admin/inventory/${id}/disable`, { reason }),
 
   orders: (qs = '') => get<Paginated<AdminOrder>>(`/admin/orders${qs}`),
+  deleteOrder: (id: string, restock = false) =>
+    del<DeletedOrder>(`/admin/orders/${id}${restock ? '?restock=true' : ''}`),
+  deleteOrders: (ids: string[], restock = false) =>
+    post<{ deleted: DeletedOrder[]; failed: Array<{ id: string; error: string }> }>('/admin/orders/bulk-delete', {
+      ids,
+      restock,
+    }),
   order: (id: string) => get<AdminOrderDetail>(`/admin/orders/${id}`),
   transitionOrder: (id: string, toStatus: string, note?: string) =>
     post<AdminOrder>(`/admin/orders/${id}/transition`, { toStatus, note }),
@@ -185,6 +195,18 @@ export const api = {
   customerSegments: () => get<Array<{ segment: CustomerSegment; count: number }>>('/admin/customers/segments'),
   setCustomerVerified: (id: string, verified: boolean) =>
     patch<{ id: string; verifiedAt: string | null }>(`/admin/customers/${id}/verification`, { verified }),
+  banCustomer: (id: string, reason: string) =>
+    post<{ customerId: string; cancelledOrders: number }>(`/admin/customers/${id}/ban`, { reason }),
+  unbanCustomer: (id: string) => post(`/admin/customers/${id}/unban`),
+
+  legacyCustomers: (search = '') =>
+    get<LegacyCustomerList>(`/admin/legacy-customers${search ? `?search=${encodeURIComponent(search)}` : ''}`),
+  importLegacyCustomers: (text: string) =>
+    post<{ added: number; updated: number; invalid: string[] }>('/admin/legacy-customers/import', { text }),
+  updateLegacyCustomer: (id: string, body: { name?: string | null; discountPercent?: number | null }) =>
+    patch<LegacyCustomer>(`/admin/legacy-customers/${id}`, body),
+  releaseLegacyCustomer: (id: string) => post(`/admin/legacy-customers/${id}/release`),
+  deleteLegacyCustomer: (id: string) => del(`/admin/legacy-customers/${id}`),
 
   staff: () => get<StaffRow[]>('/admin/staff'),
   createStaff: (body: unknown) => post<StaffRow>('/admin/staff', body),
@@ -451,6 +473,40 @@ export interface PaymentProof {
   rejectionReason: string | null;
   order?: { sequenceNumber: number; total: string; currency: string; status: string };
   customer?: { firstName: string | null; telegramUsername: string | null };
+  risk?: ProofRisk;
+}
+
+/** Computed by the API: a reused screenshot, past rejections, a brand-new account. */
+export interface ProofRisk {
+  duplicates: Array<{ orderId: string; sequenceNumber: number; sameCustomer: boolean }>;
+  previousRejections: number;
+  paidOrders: number;
+  accountAgeHours: number;
+  flags: string[];
+}
+
+export interface DeletedOrder {
+  id: string;
+  sequenceNumber: number;
+  restocked: boolean;
+}
+
+export interface LegacyCustomer {
+  id: string;
+  phone: string;
+  name: string | null;
+  /** null = the Settings percentage. */
+  discountPercent: number | null;
+  claimedById: string | null;
+  claimedAt: string | null;
+  createdAt: string;
+  claimedBy?: { id: string; firstName: string | null; lastName: string | null; telegramUsername: string | null } | null;
+}
+
+export interface LegacyCustomerList {
+  total: number;
+  claimed: number;
+  items: LegacyCustomer[];
 }
 
 export interface PendingDelivery {
@@ -514,6 +570,12 @@ export interface AdminCustomer {
 
 export interface AdminCustomerDetail extends Omit<AdminCustomer, '_count'> {
   welcomeGiftOrderId: string | null;
+  /** Shared from the customer's own Telegram account. */
+  phone: string | null;
+  bannedAt: string | null;
+  banReason: string | null;
+  legacyEntry: { id: string; phone: string; name: string | null; discountPercent: number | null; claimedAt: string | null } | null;
+  rejectedProofs: number;
   orders: Array<{
     id: string;
     sequenceNumber: number;

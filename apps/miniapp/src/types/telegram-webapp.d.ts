@@ -23,6 +23,7 @@ export interface TelegramWebApp {
   ready(): void;
   expand(): void;
   close(): void;
+  openTelegramLink?(url: string): void;
   BackButton: {
     show(): void;
     hide(): void;

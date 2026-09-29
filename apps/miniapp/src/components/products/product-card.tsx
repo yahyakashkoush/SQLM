@@ -5,6 +5,10 @@ import type { Product } from '@/types/api';
 
 export function ProductCard({ product }: { product: Product }) {
   const outOfStock = product.availableStock <= 0;
+  const price = Number(product.price);
+  const was = Number(product.compareAtPrice ?? 0);
+  // Rounded down so the badge never promises more than the real saving.
+  const savePercent = was > price && price > 0 ? Math.floor(((was - price) / was) * 100) : 0;
 
   return (
     <Link href={`/products/${product.slug}`}>
@@ -27,6 +31,11 @@ export function ProductCard({ product }: { product: Product }) {
               عرض
             </Badge>
           )}
+          {savePercent >= 5 && (
+            <Badge variant="destructive" className="absolute end-2 top-2">
+              وفّر {savePercent}%
+            </Badge>
+          )}
           {outOfStock && (
             <div className="absolute inset-0 flex items-center justify-center bg-background/80 text-xs font-medium">
               نفدت الكمية
@@ -38,6 +47,7 @@ export function ProductCard({ product }: { product: Product }) {
           {product.shortDescription && (
             <p className="line-clamp-1 text-xs text-muted-foreground">{product.shortDescription}</p>
           )}
+          {product.duration && <p className="text-[11px] text-muted-foreground">⏳ {product.duration}</p>}
           <div className="flex items-baseline gap-2 pt-1">
             <span className="text-sm font-semibold">
               {formatMoney(product.price, product.currency)}

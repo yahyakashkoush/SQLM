@@ -116,6 +116,11 @@ export interface CustomerDelivery {
 export interface StoreInfo {
   name: string;
   supportContact: string;
+  deliveryTime?: string;
+  /** Shown on the payment step: what happens to a fake receipt. */
+  proofWarning?: string;
+  rules?: string;
+  botUsername?: string | null;
   /** Display-only estimate rate; orders carry their own frozen rate. */
   egpPerUsd?: number;
 }
@@ -146,7 +151,13 @@ export interface CustomerProfile {
 export type { PaginatedResult };
 
 
-export type MemberDiscountKind = 'VERIFIED' | 'WELCOME';
+export type MemberDiscountKind = 'VERIFIED' | 'WELCOME' | 'LEGACY';
+
+export const MEMBER_DISCOUNT_LABELS: Record<MemberDiscountKind, string> = {
+  VERIFIED: 'خصم العميل المميز',
+  WELCOME: 'هدية أول طلب',
+  LEGACY: 'خصم العميل القديم',
+};
 
 /** The server's price for a cart — the same function checkout charges with. */
 export interface OrderQuote {
@@ -161,8 +172,12 @@ export interface OrderQuote {
 }
 
 export interface CustomerPerks {
-  tier: 'VERIFIED' | 'REGULAR';
+  tier: 'LEGACY' | 'VERIFIED' | 'REGULAR';
   verifiedAt: string | null;
   verifiedDiscountPercent: number;
+  /** Set once matched to the store's old-customers list. */
+  legacyDiscountPercent: number | null;
+  /** Unmatched customers can claim it from the bot while this is on. */
+  legacyOfferAvailable: boolean;
   welcomeGift: { percent: number; available: boolean; message: string } | null;
 }

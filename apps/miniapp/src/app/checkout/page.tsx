@@ -5,10 +5,11 @@ import { useRouter } from 'next/navigation';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { CheckCircle2, Circle, Gift, Loader2, Star, TicketPercent, X } from 'lucide-react';
 import { Button, Card, CardContent, Input, Separator } from '@sqlm/ui';
-import { usePaymentMethods } from '@/lib/queries';
+import { usePaymentMethods, useStoreInfo } from '@/lib/queries';
 import { cartSubtotal, useCartStore } from '@/store/cart-store';
 import { useAuthStore } from '@/store/auth-store';
 import { api, ApiError } from '@/lib/api';
+import { MEMBER_DISCOUNT_LABELS } from '@/types/api';
 import { formatMoney } from '@/lib/format';
 
 export default function CheckoutPage() {
@@ -21,6 +22,7 @@ export default function CheckoutPage() {
   const accessToken = useAuthStore((s) => s.accessToken);
 
   const paymentMethods = usePaymentMethods();
+  const { data: store } = useStoreInfo();
   const [selectedMethod, setSelectedMethod] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -53,7 +55,9 @@ export default function CheckoutPage() {
   if (!accessToken) {
     return (
       <main className="flex flex-col items-center gap-3 p-8 text-center">
-        <p className="text-sm text-muted-foreground">افتح التطبيق من جوه تيليجرام علشان تكمل الطلب.</p>
+        <p className="text-sm text-muted-foreground">
+          افتح التطبيق من جوه تيليجرام علشان تكمل الطلب.
+        </p>
       </main>
     );
   }
@@ -64,9 +68,11 @@ export default function CheckoutPage() {
   const total = priced ? Number(priced.total) : subtotal;
   // Every enabled method is offered; the admin decides which ones exist.
   const methods = paymentMethods.data ?? [];
-  const optionFor = (methodId: string) => priced?.paymentOptions.find((o) => o.paymentMethodId === methodId);
+  const optionFor = (methodId: string) =>
+    priced?.paymentOptions.find((o) => o.paymentMethodId === methodId);
   const selectedOption = selectedMethod ? optionFor(selectedMethod) : undefined;
-  const converted = selectedOption && selectedOption.currency !== currency ? selectedOption : undefined;
+  const converted =
+    selectedOption && selectedOption.currency !== currency ? selectedOption : undefined;
 
   const handleApplyCoupon = async () => {
     const code = couponInput.trim();
@@ -149,8 +155,12 @@ export default function CheckoutPage() {
           {priced?.member && (
             <div className="flex items-center justify-between text-sm text-success">
               <span className="flex items-center gap-1">
-                {priced.member.kind === 'VERIFIED' ? <Star className="h-3.5 w-3.5" /> : <Gift className="h-3.5 w-3.5" />}
-                {priced.member.kind === 'VERIFIED' ? 'خصم العميل المميز' : 'هدية أول طلب'} ({priced.member.percent}%)
+                {priced.member.kind === 'WELCOME' ? (
+                  <Gift className="h-3.5 w-3.5" />
+                ) : (
+                  <Star className="h-3.5 w-3.5" />
+                )}
+                {MEMBER_DISCOUNT_LABELS[priced.member.kind]} ({priced.member.percent}%)
               </span>
               <span>−{formatMoney(priced.member.amount, currency)}</span>
             </div>
@@ -164,14 +174,18 @@ export default function CheckoutPage() {
           <div className="flex items-center justify-between text-sm font-semibold">
             <span>الإجمالي</span>
             <span className="flex items-center gap-1">
-              {quote.isFetching && <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />}
+              {quote.isFetching && (
+                <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />
+              )}
               {formatMoney(total, currency)}
             </span>
           </div>
           {converted && (
             <div className="flex items-center justify-between rounded-md bg-primary/5 px-2 py-1.5 text-sm">
               <span>المطلوب تحويله</span>
-              <span className="font-semibold">{formatMoney(converted.amount, converted.currency)}</span>
+              <span className="font-semibold">
+                {formatMoney(converted.amount, converted.currency)}
+              </span>
             </div>
           )}
         </CardContent>
@@ -186,7 +200,9 @@ export default function CheckoutPage() {
             <div className="flex items-center justify-between rounded-lg border border-success/40 bg-success/5 p-3 text-sm">
               <span>
                 <span className="font-mono font-semibold">{priced.coupon.code}</span> —{' '}
-                <span className="text-success">وفّرت {formatMoney(priced.coupon.discount, currency)}</span>
+                <span className="text-success">
+                  وفّرت {formatMoney(priced.coupon.discount, currency)}
+                </span>
               </span>
               <button type="button" onClick={removeCoupon} aria-label="إزالة الكود">
                 <X className="h-4 w-4 text-muted-foreground" />
@@ -222,7 +238,9 @@ export default function CheckoutPage() {
         {paymentMethods.isLoading ? (
           <p className="text-xs text-muted-foreground">جاري تحميل طرق الدفع…</p>
         ) : methods.length === 0 ? (
-          <p className="text-xs text-muted-foreground">لا توجد طرق دفع متاحة حالياً، تواصل مع الدعم.</p>
+          <p className="text-xs text-muted-foreground">
+            لا توجد طرق دفع متاحة حالياً، تواصل مع الدعم.
+          </p>
         ) : (
           methods.map((method) => {
             const selected = selectedMethod === method.id;
@@ -244,25 +262,42 @@ export default function CheckoutPage() {
                 )}
                 <span className="flex-1">
                   <span className="block font-medium">{method.name}</span>
-                  {method.description && <span className="block text-xs text-muted-foreground">{method.description}</span>}
+                  {method.description && (
+                    <span className="block text-xs text-muted-foreground">
+                      {method.description}
+                    </span>
+                  )}
                 </span>
                 {inOtherCurrency && (
-                  <span className="shrink-0 text-xs font-semibold">{formatMoney(option.amount, option.currency)}</span>
+                  <span className="shrink-0 text-xs font-semibold">
+                    {formatMoney(option.amount, option.currency)}
+                  </span>
                 )}
               </button>
             );
           })
         )}
-        <p className="text-xs text-muted-foreground">بعد تأكيد الطلب هتظهر لك بيانات التحويل وتقدر ترفع صورة الإيصال.</p>
+        <p className="text-xs text-muted-foreground">
+          بعد تأكيد الطلب هتظهر لك بيانات التحويل وتقدر ترفع صورة الإيصال.
+          {store?.deliveryTime && ` التسليم ${store.deliveryTime} بعد تأكيد الدفع.`}
+        </p>
+        {store?.proofWarning && <p className="text-xs text-destructive">{store.proofWarning}</p>}
       </div>
 
       {error && <p className="text-sm text-destructive">{error}</p>}
 
       <div className="fixed inset-x-0 bottom-16 z-40 border-t bg-background p-4">
-        <Button className="w-full" size="lg" disabled={submitting || !priced} onClick={() => void handlePlaceOrder()}>
+        <Button
+          className="w-full"
+          size="lg"
+          disabled={submitting || !priced}
+          onClick={() => void handlePlaceOrder()}
+        >
           {submitting && <Loader2 className="h-4 w-4 animate-spin" />}
           تأكيد الطلب —{' '}
-          {converted ? formatMoney(converted.amount, converted.currency) : formatMoney(total, currency)}
+          {converted
+            ? formatMoney(converted.amount, converted.currency)
+            : formatMoney(total, currency)}
         </Button>
       </div>
     </main>

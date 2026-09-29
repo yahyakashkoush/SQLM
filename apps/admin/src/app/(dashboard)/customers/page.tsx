@@ -14,6 +14,7 @@ export default function CustomersPage() {
   const [search, setSearch] = useState('');
   const [debounced, setDebounced] = useState('');
   const [segment, setSegment] = useState<CustomerSegment | null>(null);
+  const [bannedOnly, setBannedOnly] = useState(false);
 
   useEffect(() => {
     const timer = setTimeout(() => setDebounced(search), 300);
@@ -22,11 +23,12 @@ export default function CustomersPage() {
 
   const segments = useQuery({ queryKey: ['customer-segments'], queryFn: () => api.customerSegments() });
   const { data, isLoading, error } = useQuery({
-    queryKey: ['customers', debounced, segment],
+    queryKey: ['customers', debounced, segment, bannedOnly],
     queryFn: () => {
       const qs = new URLSearchParams({ pageSize: '50' });
       if (debounced) qs.set('search', debounced);
       if (segment) qs.set('segment', segment);
+      if (bannedOnly) qs.set('status', 'BANNED');
       return api.customers(`?${qs.toString()}`);
     },
   });
@@ -45,7 +47,14 @@ export default function CustomersPage() {
           onChange={(e) => setSearch(e.target.value)}
           className="max-w-sm"
         />
-        <Button size="sm" variant={segment === null ? 'default' : 'outline'} onClick={() => setSegment(null)}>
+        <Button
+          size="sm"
+          variant={segment === null && !bannedOnly ? 'default' : 'outline'}
+          onClick={() => {
+            setSegment(null);
+            setBannedOnly(false);
+          }}
+        >
           All
         </Button>
         {CUSTOMER_SEGMENTS.filter((s) => s !== 'ALL').map((s) => (
@@ -54,7 +63,10 @@ export default function CustomersPage() {
             size="sm"
             variant={segment === s ? 'default' : 'outline'}
             title={CUSTOMER_SEGMENT_LABELS[s].description}
-            onClick={() => setSegment(s)}
+            onClick={() => {
+              setSegment(s);
+              setBannedOnly(false);
+            }}
           >
             {CUSTOMER_SEGMENT_LABELS[s].label}
             {segments.data && (
@@ -62,6 +74,16 @@ export default function CustomersPage() {
             )}
           </Button>
         ))}
+        <Button
+          size="sm"
+          variant={bannedOnly ? 'destructive' : 'outline'}
+          onClick={() => {
+            setBannedOnly(true);
+            setSegment(null);
+          }}
+        >
+          🚫 Banned
+        </Button>
       </div>
 
       <DataTable<AdminCustomer>
