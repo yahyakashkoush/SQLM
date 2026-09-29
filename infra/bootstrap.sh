@@ -7,6 +7,7 @@
 # updated and the stack rebuilt. Secrets are generated on the server or typed
 # here; none of them ever touch the repository.
 set -euo pipefail
+USER="${USER:-$(id -un)}"
 
 REPO_URL="https://github.com/yahyakashkoush/SQLM.git"
 BRANCH="${SQLM_BRANCH:-claude/gifted-pasteur-kpxp3n}"
@@ -18,6 +19,11 @@ say() { printf '\n\033[1;36m>>> %s\033[0m\n' "$*"; }
 warn() { printf '\033[1;33m!!! %s\033[0m\n' "$*"; }
 ask() { local v; read -r -p "$1" v </dev/tty; printf '%s' "$v"; }
 rand_hex() { openssl rand -hex "$1"; }
+
+# Everything runs inside main() so bash has parsed the whole file before the
+# first command: with `curl | bash` the script *is* stdin, and any command
+# that reads stdin (docker compose exec) would otherwise swallow the rest.
+main() {
 
 # --- 1. System packages -------------------------------------------------------
 say "Installing Docker, Git and tools"
@@ -136,7 +142,7 @@ say "Building and starting (first build takes 5–15 minutes)"
 say "Waiting for the API to become ready"
 ready=0
 for _ in $(seq 1 60); do
-  if "${COMPOSE[@]}" exec -T api node -e "fetch('http://127.0.0.1:4000/api/health/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))" 2>/dev/null; then
+  if "${COMPOSE[@]}" exec -T api node -e "fetch('http://127.0.0.1:4000/api/health/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))" </dev/null 2>/dev/null; then
     ready=1; break
   fi
   sleep 5
@@ -150,6 +156,21 @@ fi
 echo "API is ready."
 
 # --- 5. Admin account ---------------------------------------------------------
+owners=$("${COMPOSE[@]}" exec -T -w /repo/apps/api api node -e "
+  const { PrismaClient } = require('@prisma/client');
+  const prisma = new PrismaClient();
+  prisma.staff.count({ where: { role: 'OWNER', status: 'ACTIVE' } })
+    .then((n) => console.log(n)).finally(() => prisma.\$disconnect());
+" </dev/null | tail -1)
+if [ "$owners" = "0" ] && [ -z "$OWNER_EMAIL" ]; then
+  say "No admin account yet — create one"
+  while [ -z "$OWNER_EMAIL" ]; do OWNER_EMAIL=$(ask "Admin dashboard login email: "); done
+  while :; do
+    OWNER_PASSWORD=$(ask "Admin dashboard password (10+ characters): ")
+    [ ${#OWNER_PASSWORD} -ge 10 ] && break
+    warn "That was ${#OWNER_PASSWORD} characters — use at least 10."
+  done
+fi
 if [ -n "$OWNER_EMAIL" ]; then
   say "Creating admin account $OWNER_EMAIL"
   "${COMPOSE[@]}" exec -T -w /repo/apps/api -e OWNER_EMAIL="$OWNER_EMAIL" -e OWNER_PASSWORD="$OWNER_PASSWORD" api node -e "
@@ -166,7 +187,7 @@ if [ -n "$OWNER_EMAIL" ]; then
       });
       console.log('Admin account ready: ' + email);
     })().catch((e) => { console.error(e); process.exit(1); }).finally(() => prisma.\$disconnect());
-  "
+  " </dev/null
 fi
 
 # --- 6. DNS check -------------------------------------------------------------
@@ -204,3 +225,6 @@ cat <<EOF
   Logs:          sudo docker compose -f $DIR/docker-compose.prod.yml logs -f api worker
 ============================================================
 EOF
+}
+
+main "$@"
