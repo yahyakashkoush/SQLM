@@ -1,4 +1,5 @@
-import { Body, Controller, Delete, Get, Param, ParseUUIDPipe, Post, Query, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, HttpCode, HttpStatus, Param, ParseUUIDPipe, Post, Query, UseGuards } from '@nestjs/common';
+import { IsBoolean, IsOptional, IsString } from 'class-validator';
 import { OrdersService } from './orders.service';
 import { BulkDeleteOrdersDto, OrderQueryDto, TransitionOrderDto } from './dto/order-query.dto';
 import { OrderCleanupService } from './order-cleanup.service';
@@ -54,6 +55,17 @@ export class AdminOrdersController {
     return order;
   }
 
+  @Post(':id/refund')
+  @HttpCode(HttpStatus.OK)
+  @Permissions('orders.transition')
+  refund(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: RefundOrderDto,
+    @CurrentStaff() staff: AuthenticatedStaff,
+  ) {
+    return this.orders.refundOrder(id, { type: 'STAFF', staffId: staff.id }, dto.note ?? '', dto.restock ?? false);
+  }
+
   @Delete(':id')
   @Permissions('orders.delete')
   remove(
@@ -63,4 +75,9 @@ export class AdminOrdersController {
   ) {
     return this.cleanup.deleteOrder(id, staff.id, restock === 'true');
   }
+}
+
+class RefundOrderDto {
+  @IsOptional() @IsString() note?: string;
+  @IsOptional() @IsBoolean() restock?: boolean;
 }

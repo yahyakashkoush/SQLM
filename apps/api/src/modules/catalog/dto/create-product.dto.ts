@@ -156,4 +156,10 @@ export class CreateProductDto {
   @IsOptional()
   @IsUrl()
   socialPageUrl?: string | null;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @Min(0)
+  costPrice?: number | null;
 }

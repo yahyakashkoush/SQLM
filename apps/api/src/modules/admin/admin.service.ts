@@ -58,7 +58,7 @@ export class AdminService {
     // and paid today is this period's money.
     const paid: Prisma.OrderWhereInput = { status: { in: REVENUE_STATUSES } };
 
-    const [current, previous, byDay, topProducts] = await this.prisma.$transaction([
+    const [current, previous, byDay, topProducts, costRows] = await this.prisma.$transaction([
       this.prisma.order.aggregate({
         _sum: { total: true, discountTotal: true },
         _count: true,
@@ -81,14 +81,16 @@ export class AdminService {
          ORDER BY 1
       `,
       this.prisma.$queryRaw<
-        Array<{ productId: string; name: string; units: bigint; revenue: Prisma.Decimal }>
+        Array<{ productId: string; name: string; units: bigint; revenue: Prisma.Decimal; cost: Prisma.Decimal | null }>
       >`
         SELECT oi."productId",
                oi."productNameSnapshot" AS name,
                SUM(oi."quantity")                     AS units,
-               SUM(oi."unitPrice" * oi."quantity")    AS revenue
+               SUM(oi."unitPrice" * oi."quantity")    AS revenue,
+               SUM(p."costPrice" * oi."quantity")     AS cost
           FROM "order_items" oi
           JOIN "orders" o ON o."id" = oi."orderId"
+          JOIN "products" p ON p."id" = oi."productId"
          WHERE o."paidAt" >= ${from}
            AND o."paidAt" <= ${now}
            AND o."status" = ANY(${REVENUE_STATUSES}::"OrderStatus"[])
@@ -96,10 +98,21 @@ export class AdminService {
          ORDER BY revenue DESC
          LIMIT 5
       `,
+      this.prisma.$queryRaw<Array<{ total_cost: Prisma.Decimal | null }>>`
+        SELECT SUM(p."costPrice" * oi."quantity") AS total_cost
+          FROM "order_items" oi
+          JOIN "orders" o ON o."id" = oi."orderId"
+          JOIN "products" p ON p."id" = oi."productId"
+         WHERE o."paidAt" >= ${from}
+           AND o."paidAt" <= ${now}
+           AND o."status" = ANY(${REVENUE_STATUSES}::"OrderStatus"[])
+      `,
     ]);
 
     const revenue = current._sum.total ?? new Prisma.Decimal(0);
     const previousRevenue = previous._sum.total ?? new Prisma.Decimal(0);
+    const totalCost = costRows[0]?.total_cost ?? null;
+    const grossProfit = totalCost !== null ? revenue.sub(totalCost) : null;
 
     return {
       days: bounded,
@@ -110,6 +123,12 @@ export class AdminService {
       discountsGiven: (current._sum.discountTotal ?? new Prisma.Decimal(0)).toString(),
       averageOrderValue:
         current._count > 0 ? revenue.div(current._count).toDecimalPlaces(2).toString() : '0',
+      totalCost: totalCost?.toString() ?? null,
+      grossProfit: grossProfit?.toDecimalPlaces(2).toString() ?? null,
+      grossMarginPercent:
+        grossProfit !== null && !revenue.isZero()
+          ? grossProfit.div(revenue).mul(100).toDecimalPlaces(1).toNumber()
+          : null,
       previous: { revenue: previousRevenue.toString(), orders: previous._count },
       /** Null when there is nothing to compare against, rather than a
        *  meaningless +100% out of a zero baseline. */
@@ -126,6 +145,8 @@ export class AdminService {
         name: row.name,
         units: Number(row.units),
         revenue: row.revenue.toString(),
+        cost: row.cost?.toString() ?? null,
+        grossProfit: row.cost !== null ? row.revenue.sub(row.cost).toString() : null,
       })),
     };
   }

@@ -415,10 +415,32 @@ export class OrdersService {
           orderBy: { uploadedAt: 'desc' },
           select: { id: true, status: true, rejectionReason: true, uploadedAt: true },
         },
+        events: {
+          orderBy: { createdAt: 'asc' },
+          select: { id: true, type: true, fromStatus: true, toStatus: true, note: true, createdAt: true },
+        },
       },
     });
     if (!order) throw new NotFoundException('Order not found');
     return order;
+  }
+
+  /**
+   * Staff-only refund: transitions the order to REFUNDED and optionally
+   * releases reserved inventory back to stock. Inventory is only released when
+   * `restock` is true — items that were already delivered should not be
+   * restocked.
+   */
+  async refundOrder(
+    orderId: string,
+    actor: OrderActor,
+    note: string,
+    restock: boolean,
+  ): Promise<Order> {
+    return this.prisma.$transaction(async (tx) => {
+      if (restock) await this.releaseInventoryForOrder(tx, orderId);
+      return this.transition(tx, orderId, 'REFUNDED', actor, note);
+    });
   }
 
   /**

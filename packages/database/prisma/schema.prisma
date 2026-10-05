@@ -209,6 +209,10 @@ model Staff {
   telegramId     BigInt?     @unique
   /// Order, payment and support alerts pushed to the linked chat.
   telegramNotify Boolean     @default(true)
+  /// TOTP 2FA secret (base32-encoded, null until setup is completed).
+  totpSecret     String?
+  /// Whether TOTP 2FA is required at login for this account.
+  totpEnabled    Boolean     @default(false)
   createdAt      DateTime    @default(now())
   updatedAt      DateTime    @updatedAt
 
@@ -278,6 +282,7 @@ model Customer {
   legacyEntry       LegacyCustomer?
   reviews           ProductReview[]
   socialRewards     SocialRewardClaim[]
+  notifications     CustomerNotification[]
 
   @@index([verifiedAt])
   @@index([phone])
@@ -370,6 +375,8 @@ model Product {
   salesCount             Int               @default(0)
   /// Badge: "NEW", "BESTSELLER", "LIMITED", "EXCLUSIVE"
   badge                  String?
+  /// Cost price for profit analytics (optional, staff-only)
+  costPrice              Decimal?          @db.Decimal(12, 2)
   createdAt              DateTime          @default(now())
   updatedAt              DateTime          @updatedAt
 
@@ -985,4 +992,25 @@ model ProductVariant {
   @@unique([productId, sku])
   @@index([productId])
   @@map("product_variants")
+}
+
+// =============================================================================
+// Customer Notifications — in-app notification inbox for customers.
+// =============================================================================
+
+model CustomerNotification {
+  id         String    @id @default(uuid())
+  customerId String
+  customer   Customer  @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  /// Notification kind, e.g. "order.status_changed", "payment.approved"
+  kind       String
+  title      String
+  body       String
+  metadata   Json?
+  isRead     Boolean   @default(false)
+  readAt     DateTime?
+  createdAt  DateTime  @default(now())
+
+  @@index([customerId, isRead])
+  @@map("customer_notifications")
 }

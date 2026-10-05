@@ -212,6 +212,18 @@ if [ "$dns_ok" -ne 1 ]; then
 fi
 
 "${COMPOSE[@]}" ps
+
+# ── Daily database backup cron ─────────────────────────────────────────────
+BACKUP_SCRIPT="$DIR/infra/backup.sh"
+if [ -f "$BACKUP_SCRIPT" ]; then
+  chmod +x "$BACKUP_SCRIPT"
+  CRON_JOB="0 3 * * * ENV_FILE=$ENV_FILE $BACKUP_SCRIPT >> /var/log/sqlm-backup.log 2>&1"
+  if ! (crontab -l 2>/dev/null | grep -qF "$BACKUP_SCRIPT"); then
+    (crontab -l 2>/dev/null; echo "$CRON_JOB") | crontab -
+    say "Daily backup cron installed (03:00 UTC → /var/log/sqlm-backup.log)"
+  fi
+fi
+
 cat <<EOF
 
 ============================================================
@@ -223,6 +235,7 @@ cat <<EOF
 
   Update later:  curl -fsSL https://raw.githubusercontent.com/yahyakashkoush/SQLM/$BRANCH/infra/bootstrap.sh | bash
   Logs:          sudo docker compose -f $DIR/docker-compose.prod.yml logs -f api worker
+  Backup log:    tail -f /var/log/sqlm-backup.log
 ============================================================
 EOF
 }

@@ -7,12 +7,13 @@ import { CustomerAuthService } from './customer-auth.service';
 import { CustomerAuthController } from './customer-auth.controller';
 import { JwtStaffStrategy } from './strategies/jwt-staff.strategy';
 import { JwtCustomerStrategy } from './strategies/jwt-customer.strategy';
+import { TotpService } from './totp.service';
 import { CustomersModule } from '../customers/customers.module';
 
 @Module({
   imports: [PassportModule, JwtModule.register({}), CustomersModule],
   controllers: [StaffAuthController, CustomerAuthController],
-  providers: [StaffAuthService, CustomerAuthService, JwtStaffStrategy, JwtCustomerStrategy],
-  exports: [StaffAuthService, CustomerAuthService],
+  providers: [StaffAuthService, CustomerAuthService, JwtStaffStrategy, JwtCustomerStrategy, TotpService],
+  exports: [StaffAuthService, CustomerAuthService, TotpService],
 })
 export class AuthModule {}

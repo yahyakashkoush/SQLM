@@ -76,6 +76,18 @@ export class NotificationDispatcher {
     this.realtime.publishToCustomer(customerId, { ...payload, audience: 'CUSTOMER', customerId });
     if (payload.silent) return;
     await this.enqueue({ ...payload, audience: 'CUSTOMER', customerId });
+    // Persist to the in-app notification inbox (best-effort, never fails the caller).
+    this.prisma.customerNotification
+      .create({
+        data: {
+          customerId,
+          kind: payload.kind,
+          title: payload.summary.slice(0, 200),
+          body: payload.body ?? payload.summary,
+          metadata: payload as unknown as Prisma.InputJsonValue,
+        },
+      })
+      .catch((err) => this.logger.error(`Failed to persist customer notification: ${err instanceof Error ? err.message : err}`));
   }
 
   /** `where` picks the audience — see `segmentWhere`. Defaults to every active customer. */

@@ -1,16 +1,24 @@
 import { randomBytes, createHash } from 'node:crypto';
-import { Injectable, Logger, UnauthorizedException } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger, UnauthorizedException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import * as argon2 from 'argon2';
 import ms from 'ms';
 import { PrismaService } from '../prisma/prisma.service';
+import { TotpService } from './totp.service';
 import type { StaffLoginDto } from './dto/staff-login.dto';
 
 export interface StaffTokenPair {
   accessToken: string;
   refreshToken: string;
   staff: { id: string; email: string; name: string; role: string };
+}
+
+/** Issued when password succeeds but TOTP is still required. */
+export interface StaffPartialToken {
+  requires2fa: true;
+  /** Short-lived token the client echoes back with the TOTP code. */
+  partialToken: string;
 }
 
 function hashToken(token: string): string {
@@ -25,9 +33,10 @@ export class StaffAuthService {
     private readonly prisma: PrismaService,
     private readonly jwt: JwtService,
     private readonly config: ConfigService,
+    private readonly totp: TotpService,
   ) {}
 
-  async login(dto: StaffLoginDto): Promise<StaffTokenPair> {
+  async login(dto: StaffLoginDto): Promise<StaffTokenPair | StaffPartialToken> {
     const staff = await this.prisma.staff.findUnique({ where: { email: dto.email } });
     // Constant-shape failure path: verify against a dummy hash when the
     // account doesn't exist, so login timing doesn't reveal which emails
@@ -39,12 +48,71 @@ export class StaffAuthService {
       throw new UnauthorizedException('Invalid email or password');
     }
 
+    // If TOTP is enabled, issue a short-lived partial token instead of full tokens.
+    if (staff.totpEnabled && staff.totpSecret) {
+      const partialToken = this.jwt.sign(
+        { sub: staff.id, type: 'staff-2fa-pending' },
+        {
+          secret: this.config.getOrThrow<string>('JWT_ACCESS_SECRET'),
+          expiresIn: '5m',
+        },
+      );
+      return { requires2fa: true, partialToken };
+    }
+
     await this.prisma.staff.update({
       where: { id: staff.id },
       data: { lastLoginAt: new Date() },
     });
 
     return this.issueTokenPair(staff.id, staff.email, staff.name, staff.role);
+  }
+
+  /** Second step: exchange partial token + TOTP code for a real session. */
+  async verifyLogin(partialToken: string, code: string): Promise<StaffTokenPair> {
+    let payload: { sub: string; type: string };
+    try {
+      payload = this.jwt.verify(partialToken, {
+        secret: this.config.getOrThrow<string>('JWT_ACCESS_SECRET'),
+      }) as typeof payload;
+    } catch {
+      throw new UnauthorizedException('Invalid or expired partial token');
+    }
+    if (payload.type !== 'staff-2fa-pending') throw new UnauthorizedException('Invalid token type');
+
+    const staff = await this.prisma.staff.findUnique({ where: { id: payload.sub } });
+    if (!staff || staff.status !== 'ACTIVE' || !staff.totpEnabled || !staff.totpSecret) {
+      throw new UnauthorizedException('Account not eligible for 2FA verification');
+    }
+    this.totp.assertValid(staff.totpSecret, code);
+
+    await this.prisma.staff.update({ where: { id: staff.id }, data: { lastLoginAt: new Date() } });
+    return this.issueTokenPair(staff.id, staff.email, staff.name, staff.role);
+  }
+
+  /** Generate a new TOTP secret and return the URI for QR display. Does NOT activate 2FA yet. */
+  async setup2fa(staffId: string): Promise<{ secret: string; uri: string }> {
+    const secret = this.totp.generateSecret();
+    const staff = await this.prisma.staff.findUniqueOrThrow({ where: { id: staffId }, select: { email: true } });
+    await this.prisma.staff.update({ where: { id: staffId }, data: { totpSecret: secret, totpEnabled: false } });
+    const uri = this.totp.otpauthUri(staff.email, secret);
+    return { secret, uri };
+  }
+
+  /** Confirm first valid TOTP code — activates 2FA enforcement. */
+  async activate2fa(staffId: string, code: string): Promise<void> {
+    const staff = await this.prisma.staff.findUniqueOrThrow({ where: { id: staffId }, select: { totpSecret: true } });
+    if (!staff.totpSecret) throw new BadRequestException('Run setup first');
+    this.totp.assertValid(staff.totpSecret, code);
+    await this.prisma.staff.update({ where: { id: staffId }, data: { totpEnabled: true } });
+  }
+
+  /** Disable TOTP for the given staff member (requires current TOTP code). */
+  async disable2fa(staffId: string, code: string): Promise<void> {
+    const staff = await this.prisma.staff.findUniqueOrThrow({ where: { id: staffId }, select: { totpSecret: true, totpEnabled: true } });
+    if (!staff.totpEnabled || !staff.totpSecret) return;
+    this.totp.assertValid(staff.totpSecret, code);
+    await this.prisma.staff.update({ where: { id: staffId }, data: { totpEnabled: false, totpSecret: null } });
   }
 
   async refresh(refreshToken: string): Promise<StaffTokenPair> {
