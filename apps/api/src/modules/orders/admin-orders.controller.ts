@@ -9,6 +9,11 @@ import { Permissions } from '../rbac/decorators/permissions.decorator';
 import { CurrentStaff, type AuthenticatedStaff } from '../rbac/decorators/current-staff.decorator';
 import { DeliveryDispatcher } from '../delivery/delivery-dispatcher.service';
 
+class RefundOrderDto {
+  @IsOptional() @IsString() note?: string;
+  @IsOptional() @IsBoolean() restock?: boolean;
+}
+
 @Controller('admin/orders')
 @UseGuards(JwtStaffAuthGuard, PermissionsGuard)
 export class AdminOrdersController {
@@ -75,9 +80,4 @@ export class AdminOrdersController {
   ) {
     return this.cleanup.deleteOrder(id, staff.id, restock === 'true');
   }
-}
-
-class RefundOrderDto {
-  @IsOptional() @IsString() note?: string;
-  @IsOptional() @IsBoolean() restock?: boolean;
 }
