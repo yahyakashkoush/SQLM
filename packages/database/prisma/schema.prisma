@@ -358,6 +358,10 @@ model Product {
   maxGiftClaims          Int?
   /// Current count of gift claims
   giftClaimsCount        Int               @default(0)
+  /// For SOCIAL_REWARD: the Facebook post URL staff want customers to comment on
+  socialPostUrl          String?
+  /// For SOCIAL_REWARD: the Facebook page URL staff want customers to rate
+  socialPageUrl          String?
   /// Average rating (0.0 - 5.0)
   ratingScore            Decimal?          @db.Decimal(3, 2)
   /// Number of reviews/ratings

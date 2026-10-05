@@ -265,6 +265,11 @@ export interface AdminProduct {
   images: string[];
   activationInstructions: string | null;
   deliveryTemplateId: string | null;
+  giftType: string | null;
+  maxGiftClaims: number | null;
+  badge: string | null;
+  socialPostUrl: string | null;
+  socialPageUrl: string | null;
   category?: { id: string; name: string } | null;
   deliveryTemplate?: { id: string; name: string } | null;
 }

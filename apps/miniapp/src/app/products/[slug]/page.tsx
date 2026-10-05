@@ -2,7 +2,7 @@
 
 import { use, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Clock, ShieldCheck, ShoppingCart, Zap } from 'lucide-react';
+import { Clock, ShieldCheck, ShoppingCart, Star, Zap } from 'lucide-react';
 import { Badge, Button, Separator, Skeleton } from '@sqlm/ui';
 import { useProduct } from '@/lib/queries';
 import { useCartStore } from '@/store/cart-store';
@@ -86,11 +86,26 @@ export default function ProductDetailPage({ params }: { params: Promise<{ slug: 
 
       <div className="flex flex-col gap-3 px-4">
         <div className="flex flex-wrap items-center gap-2">
-          {product.featured && <Badge variant="warning">عرض</Badge>}
+          {product.badge && <Badge className="bg-primary text-primary-foreground">{product.badge}</Badge>}
+          {!product.badge && product.featured && <Badge variant="warning">عرض</Badge>}
           {outOfStock ? <Badge variant="destructive">نفدت الكمية</Badge> : <Badge variant="success">متوفر</Badge>}
         </div>
 
         <h1 className="text-xl font-semibold">{product.name}</h1>
+        {product.ratingScore && (
+          <div className="flex items-center gap-1 text-sm text-amber-500">
+            {Array.from({ length: 5 }).map((_, i) => (
+              <Star
+                key={i}
+                className={`h-4 w-4 ${i < Math.round(Number(product.ratingScore)) ? 'fill-amber-400' : 'fill-muted stroke-muted-foreground'}`}
+              />
+            ))}
+            <span className="ms-1 font-medium">{Number(product.ratingScore).toFixed(1)}</span>
+            {product.reviewCount > 0 && (
+              <span className="text-muted-foreground">({product.reviewCount} تقييم)</span>
+            )}
+          </div>
+        )}
         {product.shortDescription && <p className="text-sm text-muted-foreground">{product.shortDescription}</p>}
 
         <div className="flex items-baseline gap-2">

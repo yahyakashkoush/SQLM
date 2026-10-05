@@ -8,6 +8,7 @@ import {
   IsObject,
   IsOptional,
   IsString,
+  IsUrl,
   IsUUID,
   Matches,
   MaxLength,
@@ -132,4 +133,27 @@ export class CreateProductDto {
   @IsOptional()
   @IsBoolean()
   notifyCustomers?: boolean;
+
+  @IsOptional()
+  @IsIn(['INSTANT_FREE', 'SOCIAL_REWARD'])
+  giftType?: string | null;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  maxGiftClaims?: number | null;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  badge?: string | null;
+
+  @IsOptional()
+  @IsUrl()
+  socialPostUrl?: string | null;
+
+  @IsOptional()
+  @IsUrl()
+  socialPageUrl?: string | null;
 }

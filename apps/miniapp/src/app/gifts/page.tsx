@@ -306,6 +306,32 @@ function SocialRewardCard({ gift, hasSession }: { gift: GiftProduct; hasSession:
               3. اضغط إرسال — هيوصلك الرد خلال 24 ساعة
             </p>
 
+            {/* Quick links to the Facebook post / page */}
+            {(gift.socialPostUrl || gift.socialPageUrl) && (
+              <div className="flex gap-2">
+                {gift.socialPostUrl && (
+                  <a
+                    href={gift.socialPostUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex-1 rounded-lg border border-blue-200 bg-blue-50 py-2 text-center text-xs font-medium text-blue-700"
+                  >
+                    💬 افتح البوست
+                  </a>
+                )}
+                {gift.socialPageUrl && (
+                  <a
+                    href={gift.socialPageUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex-1 rounded-lg border border-blue-200 bg-blue-50 py-2 text-center text-xs font-medium text-blue-700"
+                  >
+                    ⭐ قيّم الصفحة
+                  </a>
+                )}
+              </div>
+            )}
+
             {/* Claim type selector */}
             <div className="flex gap-2">
               {(['FACEBOOK_COMMENT', 'FACEBOOK_RATING'] as const).map((t) => (

@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import { Star } from 'lucide-react';
 import { Badge, Card, CardContent } from '@sqlm/ui';
 import { formatMoney } from '@/lib/format';
 import type { Product } from '@/types/api';
@@ -26,7 +27,12 @@ export function ProductCard({ product }: { product: Product }) {
               لا توجد صورة
             </div>
           )}
-          {product.featured && (
+          {product.badge && (
+            <Badge className="absolute start-2 top-2 bg-primary text-primary-foreground">
+              {product.badge}
+            </Badge>
+          )}
+          {!product.badge && product.featured && (
             <Badge variant="warning" className="absolute start-2 top-2">
               عرض
             </Badge>
@@ -46,6 +52,13 @@ export function ProductCard({ product }: { product: Product }) {
           <p className="line-clamp-1 text-sm font-medium">{product.name}</p>
           {product.shortDescription && (
             <p className="line-clamp-1 text-xs text-muted-foreground">{product.shortDescription}</p>
+          )}
+          {product.ratingScore && (
+            <p className="flex items-center gap-1 text-[11px] text-amber-500">
+              <Star className="h-3 w-3 fill-amber-400" />
+              {Number(product.ratingScore).toFixed(1)}
+              {product.reviewCount > 0 && <span className="text-muted-foreground">({product.reviewCount})</span>}
+            </p>
           )}
           {product.duration && <p className="text-[11px] text-muted-foreground">⏳ {product.duration}</p>}
           <div className="flex items-baseline gap-2 pt-1">

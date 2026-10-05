@@ -53,6 +53,11 @@ interface FormState {
   visible: boolean;
   featured: boolean;
   notifyCustomers: boolean;
+  giftType: string;
+  maxGiftClaims: string;
+  badge: string;
+  socialPostUrl: string;
+  socialPageUrl: string;
 }
 
 function toForm(p: Partial<AdminProduct> | null, defaultCurrency: string): FormState {
@@ -79,6 +84,11 @@ function toForm(p: Partial<AdminProduct> | null, defaultCurrency: string): FormS
     visible: p ? p.visibility === 'VISIBLE' : true,
     featured: p?.featured ?? false,
     notifyCustomers: false,
+    giftType: p?.giftType ?? '',
+    maxGiftClaims: p?.maxGiftClaims != null ? String(p.maxGiftClaims) : '',
+    badge: p?.badge ?? '',
+    socialPostUrl: p?.socialPostUrl ?? '',
+    socialPageUrl: p?.socialPageUrl ?? '',
   };
 }
 
@@ -130,6 +140,11 @@ export function ProductForm({
         visibility: form.visible ? 'VISIBLE' : 'HIDDEN',
         featured: form.featured,
         notifyCustomers: form.notifyCustomers,
+        giftType: form.giftType || null,
+        maxGiftClaims: form.giftType && form.maxGiftClaims.trim() ? Number(form.maxGiftClaims) : null,
+        badge: form.badge.trim() || null,
+        socialPostUrl: form.socialPostUrl.trim() || null,
+        socialPageUrl: form.socialPageUrl.trim() || null,
       };
       if (form.slug.trim()) payload.slug = form.slug.trim().toLowerCase();
       return (isEdit ? api.updateProduct(product!.id!, payload) : api.createProduct(payload)) as Promise<{
@@ -284,6 +299,71 @@ export function ProductForm({
               rows={3}
               value={form.activationInstructions}
               onChange={(e) => set('activationInstructions', e.target.value)}
+            />
+          </Field>
+        </div>
+      </Section>
+
+      <Section
+        title="Gift & Badge"
+        description="Set a gift type to make this product claimable for free. Badge shows a label on the product card."
+      >
+        <div className="grid gap-3 sm:grid-cols-2">
+          <Field label="Gift type" htmlFor="p-gifttype">
+            <Select
+              id="p-gifttype"
+              value={form.giftType}
+              onChange={(e) => set('giftType', e.target.value)}
+              placeholder="— not a gift —"
+              options={[
+                { value: 'INSTANT_FREE', label: 'Instant Free — claim immediately, auto-delivered' },
+                { value: 'SOCIAL_REWARD', label: 'Social Reward — comment/rate Facebook, staff approves' },
+              ]}
+            />
+          </Field>
+          {form.giftType && (
+            <Field label="Max claims" htmlFor="p-maxclaims" hint="Total gifts available. Leave blank for unlimited.">
+              <Input
+                id="p-maxclaims"
+                type="number"
+                min="1"
+                value={form.maxGiftClaims}
+                onChange={(e) => set('maxGiftClaims', e.target.value)}
+                placeholder="e.g. 50"
+              />
+            </Field>
+          )}
+          {form.giftType === 'SOCIAL_REWARD' && (
+            <>
+              <Field label="Facebook post URL" htmlFor="p-socialpost" hint="Customers will be asked to comment on this post." className="sm:col-span-2">
+                <Input
+                  id="p-socialpost"
+                  type="url"
+                  dir="ltr"
+                  value={form.socialPostUrl}
+                  onChange={(e) => set('socialPostUrl', e.target.value)}
+                  placeholder="https://facebook.com/..."
+                />
+              </Field>
+              <Field label="Facebook page URL" htmlFor="p-socialpage" hint="Customers will be asked to rate this page." className="sm:col-span-2">
+                <Input
+                  id="p-socialpage"
+                  type="url"
+                  dir="ltr"
+                  value={form.socialPageUrl}
+                  onChange={(e) => set('socialPageUrl', e.target.value)}
+                  placeholder="https://facebook.com/..."
+                />
+              </Field>
+            </>
+          )}
+          <Field label="Badge" htmlFor="p-badge" hint="Short label on the product card (NEW, BESTSELLER, LIMITED, EXCLUSIVE or custom)">
+            <Input
+              id="p-badge"
+              dir="auto"
+              value={form.badge}
+              onChange={(e) => set('badge', e.target.value)}
+              placeholder="e.g. NEW"
             />
           </Field>
         </div>

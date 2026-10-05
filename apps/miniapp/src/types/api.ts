@@ -33,6 +33,9 @@ export interface Product {
   activationInstructions: string | null;
   featured: boolean;
   tags: string[];
+  badge: string | null;
+  ratingScore: string | null;
+  reviewCount: number;
 }
 
 export interface GiftProduct {
@@ -48,6 +51,8 @@ export interface GiftProduct {
   ratingScore: string | null;
   reviewCount: number;
   badge: string | null;
+  socialPostUrl: string | null;
+  socialPageUrl: string | null;
 }
 
 export interface SocialRewardClaim {
