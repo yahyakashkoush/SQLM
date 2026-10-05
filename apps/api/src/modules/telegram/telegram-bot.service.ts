@@ -21,6 +21,7 @@ import {
 } from './keyboards/main-menu.keyboard';
 import { LoyaltyService } from '../loyalty/loyalty.service';
 import { LegacyCustomersService } from '../loyalty/legacy-customers.service';
+import { GiftsService } from '../gifts/gifts.service';
 import { withTimeout } from '../../common/utils/with-timeout';
 import {
   FAKE_PROOF_REASON,
@@ -138,6 +139,7 @@ export class TelegramBotService implements OnModuleInit {
     private readonly staffTelegram: StaffTelegramService,
     private readonly loyalty: LoyaltyService,
     private readonly legacy: LegacyCustomersService,
+    private readonly giftsService: GiftsService,
   ) {
     const token = this.config.get<string>('TELEGRAM_BOT_TOKEN') || 'unset:unset';
     this.bot = new Bot(token);
@@ -656,10 +658,43 @@ export class TelegramBotService implements OnModuleInit {
           reply_markup: buildWebAppButton('🛍️ افتح المتجر', this.miniAppUrl),
         });
         return;
+      case 'GIFTS':
+        await this.replyWithGifts(ctx);
+        return;
       case 'LEGACY':
         await this.offerLegacyClaim(ctx);
         return;
     }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Gifts
+  // ---------------------------------------------------------------------------
+
+  private async replyWithGifts(ctx: Context): Promise<void> {
+    const gifts = await this.giftsService.listGiftProducts();
+    if (gifts.length === 0) {
+      await ctx.reply('🎁 مفيش هدايا متاحة دلوقتي — متابعنا وهنعلنلك عن أي هدايا جديدة! 🔔');
+      return;
+    }
+
+    const lines: string[] = ['🎁 *الهدايا المجانية المتاحة*\n'];
+    for (const gift of gifts) {
+      if (gift.giftType === 'INSTANT_FREE') {
+        const stockLine = gift.remainingClaims !== null
+          ? (gift.isSoldOut ? '❌ نفدت' : `✅ متبقي: ${gift.remainingClaims}`)
+          : '✅ متاحة';
+        lines.push(`🎁 *${gift.name}*\n${gift.shortDescription ?? ''}\n${stockLine}`);
+      } else if (gift.giftType === 'SOCIAL_REWARD') {
+        lines.push(`🌟 *${gift.name}* — مكافأة تفاعل\n${gift.shortDescription ?? ''}`);
+      }
+    }
+    lines.push('\nافتح المتجر لاستلام هديتك 👇');
+
+    await ctx.reply(lines.join('\n'), {
+      parse_mode: 'Markdown',
+      reply_markup: buildWebAppButton('🎁 استلم هديتك', `${this.miniAppUrl}/gifts`),
+    });
   }
 
   // ---------------------------------------------------------------------------

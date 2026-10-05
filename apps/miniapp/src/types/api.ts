@@ -35,6 +35,31 @@ export interface Product {
   tags: string[];
 }
 
+export interface GiftProduct {
+  id: string;
+  name: string;
+  shortDescription: string | null;
+  images: string[];
+  giftType: 'INSTANT_FREE' | 'SOCIAL_REWARD';
+  maxGiftClaims: number | null;
+  giftClaimsCount: number;
+  remainingClaims: number | null;
+  isSoldOut: boolean;
+  ratingScore: string | null;
+  reviewCount: number;
+  badge: string | null;
+}
+
+export interface SocialRewardClaim {
+  id: string;
+  productId: string;
+  claimType: 'FACEBOOK_COMMENT' | 'FACEBOOK_RATING';
+  status: 'PENDING' | 'APPROVED' | 'REJECTED';
+  rejectionReason: string | null;
+  createdAt: string;
+  product: { id: string; name: string; images: string[] };
+}
+
 export type PaymentProvider = 'MANUAL' | 'BINANCE' | 'BYBIT';
 
 export interface PaymentMethod {

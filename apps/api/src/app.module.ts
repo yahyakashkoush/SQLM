@@ -30,6 +30,7 @@ import { CleanupModule } from './modules/cleanup/cleanup.module';
 import { CryptoWatchModule } from './modules/crypto-payments/crypto-watch.module';
 import { CryptoPaymentsModule } from './modules/crypto-payments/crypto-payments.module';
 import { SettingsModule } from './modules/settings/settings.module';
+import { GiftsModule } from './modules/gifts/gifts.module';
 
 @Module({
   imports: [
@@ -108,6 +109,7 @@ import { SettingsModule } from './modules/settings/settings.module';
     CleanupModule,
     CryptoWatchModule,
     CryptoPaymentsModule,
+    GiftsModule,
   ],
   controllers: [AppController],
   providers: [{ provide: APP_GUARD, useClass: ThrottlerGuard }],

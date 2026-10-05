@@ -226,6 +226,11 @@ export const api = {
     post<{ sent: number }>('/admin/notifications/broadcast', body),
 
   roles: () => get<Array<{ role: string; permissions: string[] }>>('/rbac/roles'),
+
+  socialRewardsPending: () => get<AdminSocialReward[]>('/admin/gifts/social-rewards/pending'),
+  approveSocialReward: (id: string) => post(`/admin/gifts/social-rewards/${id}/approve`),
+  rejectSocialReward: (id: string, reason: string) =>
+    post(`/admin/gifts/social-rewards/${id}/reject`, { reason }),
 };
 
 export interface Paginated<T> {
@@ -683,4 +688,19 @@ export interface RevenueReport {
 export interface StaffTelegramLink {
   linked: boolean;
   notify: boolean;
+}
+
+export interface AdminSocialReward {
+  id: string;
+  status: 'PENDING' | 'APPROVED' | 'REJECTED';
+  claimType: 'FACEBOOK_COMMENT' | 'FACEBOOK_RATING';
+  facebookPostUrl: string | null;
+  facebookProfileUrl: string | null;
+  proofScreenshots: string[];
+  rejectionReason: string | null;
+  createdAt: string;
+  reviewedAt: string | null;
+  product: { id: string; name: string; images: string[] };
+  customer: { id: string; firstName: string | null; telegramUsername: string | null };
+  reviewer: { id: string; name: string } | null;
 }

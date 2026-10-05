@@ -2,14 +2,14 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { Home, ShoppingBag, Package, LifeBuoy, User } from 'lucide-react';
+import { Home, ShoppingBag, Package, Gift, User } from 'lucide-react';
 import { cn } from '@sqlm/ui';
 
 const NAV_ITEMS = [
   { href: '/shop', label: 'الرئيسية', icon: Home },
   { href: '/products', label: 'المنتجات', icon: ShoppingBag },
   { href: '/orders', label: 'طلباتي', icon: Package },
-  { href: '/support', label: 'الدعم', icon: LifeBuoy },
+  { href: '/gifts', label: 'هدايا', icon: Gift },
   { href: '/account', label: 'حسابي', icon: User },
 ] as const;
 

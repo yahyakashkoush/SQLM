@@ -8,6 +8,7 @@ import { OrdersModule } from '../orders/orders.module';
 import { SupportModule } from '../support/support.module';
 import { PaymentsModule } from '../payments/payments.module';
 import { LoyaltyModule } from '../loyalty/loyalty.module';
+import { GiftsModule } from '../gifts/gifts.module';
 import { AdminBotController } from './admin-bot.controller';
 import { StaffTelegramService } from './staff-telegram.service';
 import { StaffAlertRenderer } from './staff-alert.renderer';
@@ -27,6 +28,7 @@ import { QUEUE_NAMES } from '../queue/queue-names';
     SupportModule,
     PaymentsModule,
     LoyaltyModule,
+    GiftsModule,
   ],
   controllers: [TelegramWebhookController, AdminBotController],
   providers: [

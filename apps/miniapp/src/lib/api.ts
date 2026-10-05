@@ -5,11 +5,13 @@ import type {
   CryptoPayment,
   CustomerPerks,
   CustomerProfile,
+  GiftProduct,
   Order,
   OrderQuote,
   PaginatedResult,
   PaymentMethod,
   Product,
+  SocialRewardClaim,
   StoreInfo,
   Ticket,
   TicketThread,
@@ -162,6 +164,22 @@ export const api = {
     request<Ticket>('/support/tickets', { method: 'POST', body: JSON.stringify(payload) }, true),
   replyTicket: (id: string, message: string) =>
     request(`/support/tickets/${id}/messages`, { method: 'POST', body: JSON.stringify({ message }) }, true),
+
+  listGifts: () => request<GiftProduct[]>('/store/gifts'),
+  claimInstantGift: (productId: string) =>
+    request<Order>(`/store/gifts/${productId}/claim`, { method: 'POST' }, true),
+  submitSocialReward: (payload: {
+    productId: string;
+    claimType: 'FACEBOOK_COMMENT' | 'FACEBOOK_RATING';
+    facebookPostUrl?: string;
+    facebookProfileUrl?: string;
+    proofScreenshots: string[];
+  }) =>
+    request<SocialRewardClaim>('/store/gifts/social-reward', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }, true),
+  myRewards: () => request<SocialRewardClaim[]>('/store/gifts/social-rewards/mine', {}, true),
 
   uploadPaymentProof: (orderId: string, file: File) => {
     const form = new FormData();

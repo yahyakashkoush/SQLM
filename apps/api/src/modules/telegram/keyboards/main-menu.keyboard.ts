@@ -10,7 +10,8 @@ export const MAIN_MENU_LABELS = {
   PAYMENT: '💳 الدفع',
   SUPPORT: '🎫 الدعم',
   ACCOUNT: '👤 حسابي',
-  LEGACY: '🎁 عميل قديم؟',
+  GIFTS: '🎁 هدايا مجانية',
+  LEGACY: '⭐ عميل قديم؟',
   RULES: '📜 الضمان والشروط',
 } as const;
 
@@ -48,6 +49,8 @@ export function buildMainMenuKeyboard(): Keyboard {
     .row()
     .text(MAIN_MENU_LABELS.SUPPORT)
     .text(MAIN_MENU_LABELS.ACCOUNT)
+    .row()
+    .text(MAIN_MENU_LABELS.GIFTS)
     .row()
     .text(MAIN_MENU_LABELS.LEGACY)
     .text(MAIN_MENU_LABELS.RULES)

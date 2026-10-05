@@ -93,3 +93,12 @@ export function usePerks() {
   const hasSession = useAuthStore((s) => Boolean(s.accessToken));
   return useQuery({ queryKey: ['perks'], queryFn: api.perks, enabled: hasSession, staleTime: 60_000 });
 }
+
+export function useGifts() {
+  return useQuery({ queryKey: ['gifts'], queryFn: api.listGifts, staleTime: 60_000 });
+}
+
+export function useMyRewards() {
+  const hasSession = useAuthStore((s) => Boolean(s.accessToken));
+  return useQuery({ queryKey: ['my-rewards'], queryFn: api.myRewards, enabled: hasSession });
+}
