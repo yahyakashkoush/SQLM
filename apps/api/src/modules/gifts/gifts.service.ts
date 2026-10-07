@@ -6,6 +6,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
+import type { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { OrdersService, type OrderActor } from '../orders/orders.service';
 import { DeliveryDispatcher } from '../delivery/delivery-dispatcher.service';
@@ -113,9 +114,8 @@ export class GiftsService {
         await tx.product.update({ where: { id: productId }, data: { stock: { decrement: 1 } } });
       }
 
-      // Auto-transition: CREATED → PENDING_PAYMENT → PAID (no proof needed)
       await this.orders.transition(tx, created.id, 'PENDING_PAYMENT', actor);
-      await this.orders.transition(tx, created.id, 'PAID', { type: 'SYSTEM' });
+      await this.settleFreeOrder(tx, created.id, { type: 'SYSTEM' }, 'هدية مجانية — لا يتطلب دفع');
 
       return tx.order.findUniqueOrThrow({ where: { id: created.id }, include: { items: true } });
     });
@@ -132,6 +132,22 @@ export class GiftsService {
     });
 
     return order;
+  }
+
+  /**
+   * A $0 order still walks SUBMITTED → REVIEW → PAID: the state machine has
+   * no PENDING_PAYMENT → PAID edge, and skipping it is what made every
+   * gift claim fail with a payment error.
+   */
+  private async settleFreeOrder(
+    tx: Prisma.TransactionClient,
+    orderId: string,
+    actor: OrderActor,
+    note: string,
+  ) {
+    await this.orders.transition(tx, orderId, 'PAYMENT_SUBMITTED', actor, note);
+    await this.orders.transition(tx, orderId, 'PAYMENT_REVIEW', actor, note);
+    await this.orders.transition(tx, orderId, 'PAID', actor, note);
   }
 
   /**
@@ -247,7 +263,7 @@ export class GiftsService {
       });
 
       await this.orders.transition(tx, created.id, 'PENDING_PAYMENT', { type: 'SYSTEM' });
-      await this.orders.transition(tx, created.id, 'PAID', actor);
+      await this.settleFreeOrder(tx, created.id, actor, 'مكافأة تفاعل — تمت الموافقة');
 
       return tx.order.findUniqueOrThrow({ where: { id: created.id } });
     });
