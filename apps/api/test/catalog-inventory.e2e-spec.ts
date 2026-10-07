@@ -1,3 +1,4 @@
+import { E2E_CONTACT } from './fixtures';
 import { INestApplication } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import request from 'supertest';
@@ -246,7 +247,7 @@ describe('Catalog + Inventory (e2e)', () => {
       );
 
       const customer = await prisma.customer.create({
-        data: { telegramId: BigInt(Date.now()) },
+        data: { ...E2E_CONTACT, telegramId: BigInt(Date.now()) },
       });
       customerIds.push(customer.id);
 

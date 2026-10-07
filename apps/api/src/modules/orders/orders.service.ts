@@ -1,4 +1,4 @@
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { Prisma, type Order } from '@prisma/client';
 import { ConfigService } from '@nestjs/config';
 import { ORDER_STATUS_LABELS_AR, renderTemplate, type OrderStatus, type PaginatedResult } from '@sqlm/shared';
@@ -16,7 +16,7 @@ import {
 import { CryptoWatchService } from '../crypto-payments/crypto-watch.service';
 import { CouponsService } from '../coupons/coupons.service';
 import { LoyaltyService } from '../loyalty/loyalty.service';
-import { CartPricingService } from './cart-pricing.service';
+import { CartPricingService, bundleLabel } from './cart-pricing.service';
 import type { CheckoutDto, QuoteOrderDto } from './dto/checkout.dto';
 import type { OrderQueryDto } from './dto/order-query.dto';
 
@@ -81,11 +81,13 @@ export class OrdersService {
       throw new PaymentMethodUnavailableError(dto.paymentMethodId);
     }
 
+    const contact = await this.resolveFirstOrderContact(customerId, dto);
+
     // Priced before the transaction opens, by the same function the quote
     // endpoint uses, so the customer is charged the total they were shown.
     // Claims (gift, coupon) happen inside the transaction below.
     const quote = await this.pricing.quote(customerId, dto.items, dto.couponCode);
-    const { currency, subtotal, productById, member, discountTotal, total } = quote;
+    const { currency, subtotal, lines, member, discountTotal, total } = quote;
     const couponQuote = quote.coupon;
 
     // The client sends the total it displayed. If anything moved since —
@@ -133,8 +135,12 @@ export class OrdersService {
           await this.coupons.redeem(tx, couponQuote, customerId, created.id);
         }
 
-        for (const item of dto.items) {
-          const product = productById.get(item.productId)!;
+        if (contact) {
+          await tx.customer.update({ where: { id: customerId }, data: contact });
+        }
+
+        for (const line of lines) {
+          const { product, bundle } = line;
           await tx.orderItem.create({
             data: {
               orderId: created.id,
@@ -142,15 +148,18 @@ export class OrdersService {
               productNameSnapshot: product.name,
               deliveryTypeSnapshot: product.deliveryType,
               fulfillmentTypeSnapshot: product.fulfillmentType,
-              unitPrice: product.price,
-              quantity: item.quantity,
+              unitPrice: line.unitPrice,
+              quantity: line.units,
+              lineTotal: line.lineTotal,
+              bundleId: bundle?.id,
+              bundleLabel: bundle ? bundleLabel(bundle) : undefined,
             },
           });
 
           if (product.inventoryMode === 'INDIVIDUAL') {
-            await this.inventory.reserveIndividualItems(tx, product.id, item.quantity, created.id);
+            await this.inventory.reserveIndividualItems(tx, product.id, line.units, created.id);
           } else {
-            await this.inventory.reserveQuantity(tx, product.id, item.quantity);
+            await this.inventory.reserveQuantity(tx, product.id, line.units);
           }
         }
 
@@ -203,6 +212,48 @@ export class OrdersService {
       }
       throw err;
     }
+  }
+
+  async hasOrderWithKey(customerId: string, idempotencyKey: string): Promise<boolean> {
+    const order = await this.prisma.order.findUnique({
+      where: { customerId_idempotencyKey: { customerId, idempotencyKey } },
+      select: { id: true },
+    });
+    return order !== null;
+  }
+
+  /**
+   * Name and phone are asked once, on the first order. A customer who has
+   * them on file is never asked again and anything sent is ignored, so an
+   * order can't be used to overwrite them.
+   */
+  private async resolveFirstOrderContact(
+    customerId: string,
+    dto: CheckoutDto,
+  ): Promise<{ fullName?: string; contactPhone?: string } | null> {
+    const customer = await this.prisma.customer.findUniqueOrThrow({
+      where: { id: customerId },
+      select: { fullName: true, contactPhone: true },
+    });
+    if (customer.fullName && customer.contactPhone) return null;
+
+    const fullName = dto.fullName?.replace(/\s+/g, ' ').trim();
+    const contactPhone = normalizeContactPhone(dto.contactPhone);
+    const missing = {
+      fullName: !customer.fullName && (!fullName || fullName.length < 2),
+      contactPhone: !customer.contactPhone && !contactPhone,
+    };
+    if (missing.fullName || missing.contactPhone) {
+      throw new BadRequestException({
+        code: 'CONTACT_REQUIRED',
+        message: 'اكتب اسمك ورقم موبايلك — بنطلبهم مرة واحدة بس في أول طلب.',
+        missing,
+      });
+    }
+    return {
+      ...(customer.fullName ? {} : { fullName: fullName!.slice(0, 80) }),
+      ...(customer.contactPhone ? {} : { contactPhone: contactPhone! }),
+    };
   }
 
   /**
@@ -564,3 +615,12 @@ export class OrdersService {
 
 // Re-exported so callers translating errors to HTTP don't need to import from two places.
 export { InsufficientInventoryError };
+
+/** Arabic-Indic digits to ASCII, everything but digits and a leading + dropped. 8–15 digits or null. */
+export function normalizeContactPhone(raw: string | undefined | null): string | null {
+  if (!raw) return null;
+  const ascii = raw.replace(/[\u0660-\u0669]/g, (d) => String(d.charCodeAt(0) - 0x0660)).replace(/[\u06F0-\u06F9]/g, (d) => String(d.charCodeAt(0) - 0x06f0));
+  const plus = ascii.trim().startsWith('+') ? '+' : '';
+  const digits = ascii.replace(/\D/g, '');
+  return digits.length >= 8 && digits.length <= 15 ? plus + digits : null;
+}

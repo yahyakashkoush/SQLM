@@ -10,6 +10,10 @@ import {
   UpdateSettingDto,
   UpdateStaffDto,
   BanCustomerDto,
+  MessageCustomerDto,
+  SuspendCustomerDto,
+  ReviewAppealDto,
+  AppealQueryDto,
 } from './dto/admin.dto';
 import { JwtStaffAuthGuard } from '../rbac/guards/jwt-staff-auth.guard';
 import { PermissionsGuard } from '../rbac/guards/permissions.guard';
@@ -18,6 +22,8 @@ import { CurrentStaff, type AuthenticatedStaff } from '../rbac/decorators/curren
 import { NotificationDispatcher } from '../notifications/notification-dispatcher.service';
 import { segmentWhere } from '../customers/customer-segments';
 import { CustomerModerationService } from '../orders/customer-moderation.service';
+import { CustomerSecurityService } from '../orders/customer-security.service';
+import { AuditService } from '../audit/audit.service';
 
 @Controller('admin')
 @UseGuards(JwtStaffAuthGuard, PermissionsGuard)
@@ -27,6 +33,8 @@ export class AdminController {
     private readonly notifications: NotificationDispatcher,
     private readonly config: ConfigService,
     private readonly moderation: CustomerModerationService,
+    private readonly security: CustomerSecurityService,
+    private readonly audit: AuditService,
   ) {}
 
   @Get('stats')
@@ -120,6 +128,57 @@ export class AdminController {
   async unban(@Param('id') id: string, @CurrentStaff() staff: AuthenticatedStaff) {
     await this.moderation.unban(id, staff.id);
     return { ok: true };
+  }
+
+  /** A one-off Telegram message from the store to this customer. */
+  @Post('customers/:id/message')
+  @Permissions('customers.write')
+  async message(
+    @Param('id') id: string,
+    @Body() dto: MessageCustomerDto,
+    @CurrentStaff() staff: AuthenticatedStaff,
+  ) {
+    await this.admin.getCustomer(id);
+    const miniAppUrl = this.config.get<string>('MINIAPP_URL', 'http://localhost:3200');
+    await this.notifications.notifyCustomer(id, {
+      kind: 'customer.message',
+      summary: dto.message.trim(),
+      button: dto.withStoreButton ? { text: '🛍️ افتح المتجر', url: miniAppUrl } : undefined,
+    });
+    await this.audit.log({
+      actorStaffId: staff.id,
+      action: 'customer.messaged',
+      entityType: 'customer',
+      entityId: id,
+      changes: { message: dto.message.slice(0, 500) },
+    });
+    return { ok: true };
+  }
+
+  @Post('customers/:id/suspend')
+  @Permissions('customers.ban')
+  suspend(@Param('id') id: string, @Body() dto: SuspendCustomerDto, @CurrentStaff() staff: AuthenticatedStaff) {
+    return this.security.suspend(id, staff.id, dto.hours, dto.reason);
+  }
+
+  /** Lifts a temporary suspension and clears the strike count. */
+  @Post('customers/:id/lift-suspension')
+  @Permissions('customers.ban')
+  async liftSuspension(@Param('id') id: string, @CurrentStaff() staff: AuthenticatedStaff) {
+    await this.security.lift(id, staff.id);
+    return { ok: true };
+  }
+
+  @Get('appeals')
+  @Permissions('customers.read')
+  appeals(@Query() query: AppealQueryDto) {
+    return this.security.listAppeals(query.status);
+  }
+
+  @Post('appeals/:id/review')
+  @Permissions('customers.ban')
+  reviewAppeal(@Param('id') id: string, @Body() dto: ReviewAppealDto, @CurrentStaff() staff: AuthenticatedStaff) {
+    return this.security.reviewAppeal(id, staff.id, dto.accept, dto.response);
   }
 
   /** Staff override of the automatic verified status. */

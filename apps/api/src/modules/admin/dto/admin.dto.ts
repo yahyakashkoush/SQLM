@@ -56,6 +56,45 @@ export class BanCustomerDto {
   reason!: string;
 }
 
+export class MessageCustomerDto {
+  @IsString()
+  @MinLength(1)
+  @MaxLength(2000)
+  message!: string;
+
+  @IsOptional()
+  @IsBoolean()
+  withStoreButton?: boolean;
+}
+
+export class SuspendCustomerDto {
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(24 * 90)
+  hours!: number;
+
+  @IsString()
+  @MaxLength(300)
+  reason!: string;
+}
+
+export class ReviewAppealDto {
+  @IsBoolean()
+  accept!: boolean;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  response?: string;
+}
+
+export class AppealQueryDto {
+  @IsOptional()
+  @IsIn(['PENDING', 'ACCEPTED', 'REJECTED'])
+  status?: 'PENDING' | 'ACCEPTED' | 'REJECTED';
+}
+
 export class AuditLogQueryDto extends PaginationDto {
   @IsOptional()
   @IsString()

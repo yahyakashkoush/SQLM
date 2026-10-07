@@ -24,6 +24,11 @@ export class CheckoutItemDto {
   @Min(1)
   @Max(50)
   quantity!: number;
+
+  /** Buy this product as a bundle; `quantity` is then the number of bundles. */
+  @IsOptional()
+  @IsUUID()
+  bundleId?: string;
 }
 
 export class CheckoutDto {
@@ -57,6 +62,19 @@ export class CheckoutDto {
   @IsNumber({ maxDecimalPlaces: 2 })
   @Min(0)
   expectedTotal?: number;
+
+  /** Required on the customer's first order only; stored on the account after that. */
+  @IsOptional()
+  @IsString()
+  @MinLength(2)
+  @MaxLength(80)
+  fullName?: string;
+
+  @IsOptional()
+  @IsString()
+  @MinLength(6)
+  @MaxLength(24)
+  contactPhone?: string;
 }
 
 /** A cart to price without placing it. */

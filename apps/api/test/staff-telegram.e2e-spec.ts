@@ -1,3 +1,4 @@
+import { E2E_CONTACT } from './fixtures';
 import { INestApplication } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
@@ -19,6 +20,9 @@ const PNG = Buffer.from([
   0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52, 0x00, 0x00, 0x00,
   0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00, 0x00, 0x1f, 0x15, 0xc4, 0x89,
 ]);
+
+/** Distinct bytes per upload: the same receipt from another customer is refused as a copy. */
+const uniquePng = () => Buffer.concat([PNG, Buffer.from(Math.random().toString(36))]);
 
 /**
  * Staff on Telegram: linking an account from the dashboard, and reviewing
@@ -66,7 +70,7 @@ describe('Staff Telegram alerts and payment review (e2e)', () => {
   /** A customer with an order awaiting review and its uploaded proof. */
   async function orderWithProof(method = methodId) {
     const customer = await prisma.customer.create({
-      data: { telegramId: BigInt(nextTelegramId()), firstName: 'Mona', telegramUsername: 'mona_e2e' },
+      data: { ...E2E_CONTACT, telegramId: BigInt(nextTelegramId()), firstName: 'Mona', telegramUsername: 'mona_e2e' },
     });
     customerIds.push(customer.id);
     const product = await prisma.product.create({
@@ -99,7 +103,7 @@ describe('Staff Telegram alerts and payment review (e2e)', () => {
     const proof = await request(app.getHttpServer())
       .post(`/api/v1/orders/${order.body.id}/payment-proof`)
       .set('Authorization', `Bearer ${customerToken}`)
-      .attach('file', PNG, { filename: 'receipt.png', contentType: 'image/png' })
+      .attach('file', uniquePng(), { filename: 'receipt.png', contentType: 'image/png' })
       .expect(201);
 
     return { orderId: order.body.id as string, sequenceNumber: order.body.sequenceNumber as number, proofId: proof.body.id as string };

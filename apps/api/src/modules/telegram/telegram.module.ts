@@ -14,6 +14,8 @@ import { StaffTelegramService } from './staff-telegram.service';
 import { StaffAlertRenderer } from './staff-alert.renderer';
 import { StaffNotifier } from './staff-notifier.service';
 import { BotGuardService } from './bot-guard.service';
+import { BotAdminPanelService } from './bot-admin-panel.service';
+import { WholesaleModule } from '../wholesale/wholesale.module';
 import { QUEUE_NAMES } from '../queue/queue-names';
 
 /** Global so the notifications worker can push outbound messages (to
@@ -29,6 +31,7 @@ import { QUEUE_NAMES } from '../queue/queue-names';
     PaymentsModule,
     LoyaltyModule,
     GiftsModule,
+    WholesaleModule,
   ],
   controllers: [TelegramWebhookController, AdminBotController],
   providers: [
@@ -38,6 +41,7 @@ import { QUEUE_NAMES } from '../queue/queue-names';
     StaffAlertRenderer,
     StaffNotifier,
     BotGuardService,
+    BotAdminPanelService,
   ],
   exports: [TelegramBotService, StaffNotifier, BotGuardService],
 })

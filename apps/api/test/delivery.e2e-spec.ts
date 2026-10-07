@@ -1,3 +1,4 @@
+import { E2E_CONTACT } from './fixtures';
 import { INestApplication } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
@@ -76,7 +77,7 @@ describe('Delivery / fulfillment (e2e)', () => {
   /** Checkout + approve payment through the real endpoints, leaving the order PAID. */
   async function createPaidOrder(items: Array<{ productId: string; quantity: number }>) {
     const customer = await prisma.customer.create({
-      data: { telegramId: BigInt(Date.now() + Math.floor(Math.random() * 100000)) },
+      data: { ...E2E_CONTACT, telegramId: BigInt(Date.now() + Math.floor(Math.random() * 100000)) },
     });
     customerIds.push(customer.id);
     const token = customerToken(customer.id);
@@ -435,7 +436,7 @@ describe('Delivery / fulfillment (e2e)', () => {
       await delivery.fulfillOrder(owner.orderId);
 
       const intruder = await prisma.customer.create({
-        data: { telegramId: BigInt(Date.now() + 987654) },
+        data: { ...E2E_CONTACT, telegramId: BigInt(Date.now() + 987654) },
       });
       customerIds.push(intruder.id);
 

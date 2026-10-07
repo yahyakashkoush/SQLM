@@ -13,6 +13,8 @@ export const MAIN_MENU_LABELS = {
   GIFTS: '🎁 هدايا مجانية',
   LEGACY: '⭐ عميل قديم؟',
   RULES: '📜 الضمان والشروط',
+  WHOLESALE: '🏪 تجار الجملة',
+  TERMS: '📄 الشروط والأحكام',
 } as const;
 
 export type MainMenuAction = keyof typeof MAIN_MENU_LABELS;
@@ -54,6 +56,9 @@ export function buildMainMenuKeyboard(): Keyboard {
     .row()
     .text(MAIN_MENU_LABELS.LEGACY)
     .text(MAIN_MENU_LABELS.RULES)
+    .row()
+    .text(MAIN_MENU_LABELS.WHOLESALE)
+    .text(MAIN_MENU_LABELS.TERMS)
     .resized()
     .persistent();
 }

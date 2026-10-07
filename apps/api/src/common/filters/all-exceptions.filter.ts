@@ -67,9 +67,21 @@ export class AllExceptionsFilter implements ExceptionFilter {
       ...(isDomain && 'code' in exception && typeof exception.code === 'string'
         ? { code: exception.code }
         : {}),
+      // Our own HttpExceptions carry a code (and a little context) the same
+      // way: CONTACT_REQUIRED says which fields, ACCOUNT_SUSPENDED until when.
+      ...(isHttp && typeof payload === 'object' && payload ? pickClientFields(payload as Record<string, unknown>) : {}),
       ...(isHttp && typeof payload === 'object' && payload && 'errors' in payload
         ? { errors: (payload as Record<string, unknown>).errors }
         : {}),
     });
   }
+}
+
+const CLIENT_FIELDS = ['code', 'missing', 'until'] as const;
+
+function pickClientFields(payload: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  if (typeof payload.code !== 'string') return out;
+  for (const key of CLIENT_FIELDS) if (key in payload) out[key] = payload[key];
+  return out;
 }

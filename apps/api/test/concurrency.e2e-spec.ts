@@ -1,3 +1,4 @@
+import { E2E_CONTACT } from './fixtures';
 import { INestApplication } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
@@ -54,7 +55,7 @@ describe('Concurrency and failure handling (e2e)', () => {
 
   async function newCustomer() {
     const customer = await prisma.customer.create({
-      data: { telegramId: BigInt(Date.now() + Math.floor(Math.random() * 1_000_000)) },
+      data: { ...E2E_CONTACT, telegramId: BigInt(Date.now() + Math.floor(Math.random() * 1_000_000)) },
     });
     customerIds.push(customer.id);
     return { id: customer.id, token: customerToken(customer.id) };
@@ -296,9 +297,9 @@ describe('Concurrency and failure handling (e2e)', () => {
     const orderId = checkout.body.id as string;
     orderIds.push(orderId);
 
-    const png = Buffer.from([
-      0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44,
-      0x52,
+    const png = Buffer.concat([
+      Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52]),
+      Buffer.from(Math.random().toString(36)),
     ]);
     const upload = await request(app.getHttpServer())
       .post(`/api/v1/orders/${orderId}/payment-proof`)
@@ -340,7 +341,10 @@ describe('Concurrency and failure handling (e2e)', () => {
     const orderId = checkout.body.id as string;
     orderIds.push(orderId);
 
-    const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    const png = Buffer.concat([
+      Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+      Buffer.from(Math.random().toString(36)),
+    ]);
     const upload = () =>
       request(app.getHttpServer())
         .post(`/api/v1/orders/${orderId}/payment-proof`)

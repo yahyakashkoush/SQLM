@@ -1,3 +1,4 @@
+import { E2E_CONTACT } from './fixtures';
 import { INestApplication } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
@@ -21,10 +22,15 @@ const PAID_OR_LATER = ['PAID', 'PROCESSING', 'READY_FOR_DELIVERY', 'DELIVERED', 
 
 /** A minimal but genuinely valid PNG — the upload path verifies magic bytes, not just the declared type. */
 function pngBytes(): Buffer {
-  return Buffer.from([
-    0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52,
-    0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00, 0x00, 0x1f, 0x15, 0xc4,
-    0x89,
+  // A random tail makes every receipt distinct: one image reused across
+  // customers is refused as a copied receipt.
+  return Buffer.concat([
+    Buffer.from([
+      0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52,
+      0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00, 0x00, 0x1f, 0x15, 0xc4,
+      0x89,
+    ]),
+    Buffer.from(Math.random().toString(36)),
   ]);
 }
 
@@ -54,7 +60,7 @@ describe('Payments + Payment Proofs (e2e)', () => {
   }
 
   async function createCustomerWithOrder(telegramId: number, price = 10) {
-    const customer = await prisma.customer.create({ data: { telegramId: BigInt(telegramId) } });
+    const customer = await prisma.customer.create({ data: { ...E2E_CONTACT, telegramId: BigInt(telegramId) } });
     customerIds.push(customer.id);
     const product = await prisma.product.create({
       data: {

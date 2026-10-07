@@ -99,6 +99,36 @@ export class StaffAlertRenderer {
       case 'support.ticket_created':
       case 'support.customer_reply':
         return this.ticketAlert(job);
+      case 'appeal.created':
+        return {
+          permission: 'customers.ban',
+          text: clip([job.summary, job.body ?? ''].filter(Boolean).join('\n\n')),
+          buttons: [
+            [
+              { text: '✅ قبول ورفع الإيقاف', callbackData: `ad:apA:${String(job.appealId)}` },
+              { text: '❌ رفض', callbackData: `ad:apR:${String(job.appealId)}` },
+            ],
+            ...this.link('👤 العميل', `/customers/${String(job.customerId)}`),
+          ],
+        };
+      case 'wholesale.applied':
+        return {
+          permission: 'customers.write',
+          text: clip([job.summary, job.body ?? ''].filter(Boolean).join('\n\n')),
+          buttons: [
+            [
+              { text: '✅ قبول', callbackData: `ad:whA:${String(job.applicationId)}` },
+              { text: '❌ رفض', callbackData: `ad:whR:${String(job.applicationId)}` },
+            ],
+            ...this.link('🏪 طلبات الجملة', '/wholesale'),
+          ],
+        };
+      case 'customer.strike':
+        return {
+          permission: 'customers.ban',
+          text: clip(`${job.summary}\n${job.action === 'BAN' ? '🚫 العميل اتحظر تلقائي.' : '⏸️ العميل اتوقف مؤقتاً.'}`),
+          buttons: this.link('👤 العميل', `/customers/${String(job.customerId)}`),
+        };
       case 'inventory.low_stock':
         return {
           permission: 'inventory.read',
@@ -126,6 +156,7 @@ export class StaffAlertRenderer {
       [
         `🧾 إثبات دفع — طلب #${order.sequenceNumber}`,
         ...(risk && risk.flags.length > 0 ? [risk.flags.join('\n')] : []),
+        ...(proof?.senderReference ? [`📱 حوّل من: ${proof.senderReference}`] : []),
         describeOrder(order),
         pending ? '👇 راجع الإيصال على كشف الحساب وقرّر:' : '✔️ الإثبات ده اتراجع خلاص.',
       ].join('\n\n'),

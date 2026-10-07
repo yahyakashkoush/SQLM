@@ -42,7 +42,7 @@ export class AdminPaymentProofsController {
     @Body() dto: RejectPaymentProofDto,
     @CurrentStaff() staff: AuthenticatedStaff,
   ) {
-    return this.paymentProofs.reject(id, staff.id, dto.reason, dto.cancelOrder ?? false);
+    return this.paymentProofs.reject(id, staff.id, dto.reason, dto.cancelOrder ?? false, dto.strike);
   }
 
   @Post(':id/note')

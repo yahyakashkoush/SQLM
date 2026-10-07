@@ -1,3 +1,4 @@
+import { E2E_CONTACT } from './fixtures';
 import { INestApplication } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
@@ -27,7 +28,7 @@ describe('Orders + Checkout (e2e)', () => {
   let disabledPaymentMethodId: string;
 
   async function authenticateCustomer(telegramId: number): Promise<{ id: string; token: string }> {
-    const customer = await prisma.customer.create({ data: { telegramId: BigInt(telegramId) } });
+    const customer = await prisma.customer.create({ data: { ...E2E_CONTACT, telegramId: BigInt(telegramId) } });
     customerIds.push(customer.id);
     // Issue a token directly rather than re-deriving the Telegram HMAC signing
     // helper here — auth.e2e-spec.ts already covers that path end to end.

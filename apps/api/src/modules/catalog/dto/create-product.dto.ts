@@ -1,5 +1,6 @@
 import { Type } from 'class-transformer';
 import {
+  ArrayMaxSize,
   IsArray,
   IsBoolean,
   IsIn,
@@ -11,8 +12,10 @@ import {
   IsUrl,
   IsUUID,
   Matches,
+  Max,
   MaxLength,
   Min,
+  ValidateNested,
 } from 'class-validator';
 import {
   DELIVERY_TYPES,
@@ -26,6 +29,38 @@ import {
   type ProductStatus,
   type ProductVisibility,
 } from '@sqlm/shared';
+
+export class ProductBundleDto {
+  /** Existing bundle to update; omitted = a new bundle. */
+  @IsOptional()
+  @IsUUID()
+  id?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(60)
+  label?: string | null;
+
+  @Type(() => Number)
+  @IsInt()
+  @Min(2)
+  @Max(1000)
+  quantity!: number;
+
+  /** Price of the whole bundle. */
+  @Type(() => Number)
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @Min(0.01)
+  price!: number;
+
+  @IsOptional()
+  @IsBoolean()
+  wholesaleOnly?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  active?: boolean;
+}
 
 export class CreateProductDto {
   /** Generated from `name` when omitted. */
@@ -162,4 +197,28 @@ export class CreateProductDto {
   @IsNumber({ maxDecimalPlaces: 2 })
   @Min(0)
   costPrice?: number | null;
+
+  /** Star rating shown on the product (0–5), set by staff. Null hides the stars. */
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber({ maxDecimalPlaces: 1 })
+  @Min(0)
+  @Max(5)
+  ratingScore?: number | null;
+
+  /** The number shown next to the stars. */
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  @Max(1_000_000)
+  reviewCount?: number;
+
+  /** Replaces the product's bundles: listed ones are kept/updated, others removed. */
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(12)
+  @ValidateNested({ each: true })
+  @Type(() => ProductBundleDto)
+  bundles?: ProductBundleDto[];
 }

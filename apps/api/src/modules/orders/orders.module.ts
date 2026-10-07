@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { OrdersService } from './orders.service';
 import { CartPricingService } from './cart-pricing.service';
 import { CustomerModerationService } from './customer-moderation.service';
+import { CustomerSecurityService } from './customer-security.service';
 import { OrderCleanupService } from './order-cleanup.service';
 import { OrdersController } from './orders.controller';
 import { AdminOrdersController } from './admin-orders.controller';
@@ -13,7 +14,7 @@ import { LoyaltyModule } from '../loyalty/loyalty.module';
 @Module({
   imports: [InventoryModule, CouponsModule, LoyaltyModule],
   controllers: [OrdersController, AdminOrdersController, CouponQuoteController],
-  providers: [OrdersService, CartPricingService, CustomerModerationService, OrderCleanupService],
-  exports: [OrdersService, CartPricingService, CustomerModerationService, OrderCleanupService],
+  providers: [OrdersService, CartPricingService, CustomerModerationService, CustomerSecurityService, OrderCleanupService],
+  exports: [OrdersService, CartPricingService, CustomerModerationService, CustomerSecurityService, OrderCleanupService],
 })
 export class OrdersModule {}

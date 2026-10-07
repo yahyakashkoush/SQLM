@@ -1,3 +1,4 @@
+import { E2E_CONTACT } from './fixtures';
 import { INestApplication } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
@@ -45,7 +46,7 @@ describe('Loyalty, pricing and segments (e2e)', () => {
 
   async function newCustomer(data: { verifiedAt?: Date } = {}) {
     const customer = await prisma.customer.create({
-      data: { telegramId: BigInt(Date.now() * 1000 + Math.floor(Math.random() * 1000)), ...data },
+      data: { ...E2E_CONTACT, telegramId: BigInt(Date.now() * 1000 + Math.floor(Math.random() * 1000)), ...data },
     });
     customerIds.push(customer.id);
     return { id: customer.id, token: token(customer.id, 'customer') };

@@ -1,4 +1,5 @@
 import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { nanoid } from 'nanoid';
 import type { Staff } from '@prisma/client';
 import { ROLE_PERMISSIONS, type Permission, type Role } from '@sqlm/shared';
@@ -53,7 +54,34 @@ export class StaffTelegramService {
     private readonly redis: RedisService,
     private readonly paymentProofs: PaymentProofsService,
     private readonly moderation: CustomerModerationService,
+    private readonly config: ConfigService,
   ) {}
+
+  /**
+   * Telegram ids from TELEGRAM_ADMIN_IDS. The env file is the server's own
+   * config, so these act as the store owner without a dashboard link.
+   */
+  private envAdminIds(): Set<string> {
+    const raw = this.config.get<string>('TELEGRAM_ADMIN_IDS') ?? '';
+    return new Set(raw.split(',').map((id) => id.trim()).filter((id) => /^\d+$/.test(id)));
+  }
+
+  private async ownerStaff(): Promise<Staff | null> {
+    return this.prisma.staff.findFirst({
+      where: { role: 'OWNER', status: 'ACTIVE' },
+      orderBy: { createdAt: 'asc' },
+    });
+  }
+
+  /** Linked staff or an env admin — anyone who gets the admin panel. */
+  async isAdminAccount(telegramUserId: number): Promise<boolean> {
+    if (this.envAdminIds().has(String(telegramUserId))) return true;
+    const staff = await this.prisma.staff.findUnique({
+      where: { telegramId: BigInt(telegramUserId) },
+      select: { status: true },
+    });
+    return staff?.status === 'ACTIVE';
+  }
 
   // ---------------------------------------------------------------------------
   // Linking
@@ -126,14 +154,22 @@ export class StaffTelegramService {
       where: { status: 'ACTIVE', telegramNotify: true, telegramId: { not: null } },
       select: { id: true, telegramId: true, role: true },
     });
-    return staff.filter((s) => can(s.role as Role, permission));
+    const linked = staff.filter((s) => can(s.role as Role, permission));
+    const envIds = [...this.envAdminIds()].filter((id) => !staff.some((s) => s.telegramId?.toString() === id));
+    if (envIds.length === 0) return linked;
+    const owner = await this.ownerStaff();
+    if (!owner) return linked;
+    return [...linked, ...envIds.map((id) => ({ id: owner.id, telegramId: BigInt(id) }))];
   }
 
   /** The staff member behind a Telegram account, if linked, active and allowed. */
   async actingStaff(telegramUserId: number, permission: Permission): Promise<Staff | null> {
     const staff = await this.prisma.staff.findUnique({ where: { telegramId: BigInt(telegramUserId) } });
-    if (!staff || staff.status !== 'ACTIVE' || !can(staff.role as Role, permission)) return null;
-    return staff;
+    if (staff) {
+      return staff.status === 'ACTIVE' && can(staff.role as Role, permission) ? staff : null;
+    }
+    if (this.envAdminIds().has(String(telegramUserId))) return this.ownerStaff();
+    return null;
   }
 
   // ---------------------------------------------------------------------------
@@ -181,7 +217,7 @@ export class StaffTelegramService {
     const proof = await this.prisma.paymentProof.findUnique({ where: { id: proofId }, select: { customerId: true } });
     if (!proof) return { ok: false, message: 'الإثبات ده مش موجود.' };
     try {
-      await this.paymentProofs.reject(proofId, staff.id, FAKE_PROOF_REASON, true);
+      await this.paymentProofs.reject(proofId, staff.id, FAKE_PROOF_REASON, true, false);
       await this.moderation.ban(proof.customerId, staff.id, FAKE_PROOF_REASON);
       this.logger.warn(`Proof ${proofId} rejected as fake and customer ${proof.customerId} banned by staff ${staff.id}`);
       return { ok: true, staffName: staff.name };

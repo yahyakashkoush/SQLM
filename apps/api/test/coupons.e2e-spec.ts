@@ -1,3 +1,4 @@
+import { E2E_CONTACT } from './fixtures';
 import { INestApplication } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
@@ -36,7 +37,7 @@ describe('Coupons (e2e)', () => {
 
   async function newCustomer() {
     const customer = await prisma.customer.create({
-      data: { telegramId: BigInt(Date.now() + Math.floor(Math.random() * 1_000_000)) },
+      data: { ...E2E_CONTACT, telegramId: BigInt(Date.now() + Math.floor(Math.random() * 1_000_000)) },
     });
     customerIds.push(customer.id);
     return { id: customer.id, token: customerToken(customer.id) };

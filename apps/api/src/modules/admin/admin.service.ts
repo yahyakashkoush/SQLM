@@ -86,7 +86,7 @@ export class AdminService {
         SELECT oi."productId",
                oi."productNameSnapshot" AS name,
                SUM(oi."quantity")                     AS units,
-               SUM(oi."unitPrice" * oi."quantity")    AS revenue,
+               SUM(COALESCE(oi."lineTotal", oi."unitPrice" * oi."quantity")) AS revenue,
                SUM(p."costPrice" * oi."quantity")     AS cost
           FROM "order_items" oi
           JOIN "orders" o ON o."id" = oi."orderId"
@@ -287,6 +287,14 @@ export class AdminService {
         phone: true,
         bannedAt: true,
         banReason: true,
+        fullName: true,
+        contactPhone: true,
+        wholesaleAt: true,
+        suspendedUntil: true,
+        suspendReason: true,
+        strikes: { orderBy: { createdAt: 'desc' }, take: 20 },
+        appeals: { orderBy: { createdAt: 'desc' }, take: 10 },
+        wholesaleApplications: { orderBy: { createdAt: 'desc' }, take: 5 },
         legacyEntry: { select: { id: true, phone: true, name: true, discountPercent: true, claimedAt: true } },
         createdAt: true,
         orders: {

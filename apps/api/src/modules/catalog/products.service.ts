@@ -3,11 +3,18 @@ import type { Prisma, Product } from '@prisma/client';
 import type { PaginatedResult } from '@sqlm/shared';
 import { PrismaService } from '../prisma/prisma.service';
 import { slugify, uniqueSlug } from '../../common/utils/slug';
-import type { CreateProductDto } from './dto/create-product.dto';
+import type { CreateProductDto, ProductBundleDto } from './dto/create-product.dto';
 import type { UpdateProductDto } from './dto/update-product.dto';
 import type { AdminProductQueryDto, ProductQueryDto } from './dto/product-query.dto';
 
 export type PublicProduct = Product & { availableStock: number };
+
+/** Bundles anyone may see. Wholesale bundles are served only to approved members. */
+const PUBLIC_BUNDLES = {
+  where: { active: true, wholesaleOnly: false },
+  orderBy: [{ sortOrder: 'asc' }, { quantity: 'asc' }],
+  select: { id: true, label: true, quantity: true, price: true },
+} satisfies Prisma.Product$bundlesArgs;
 
 @Injectable()
 export class ProductsService {
@@ -46,13 +53,14 @@ export class ProductsService {
       this.prisma.product.findMany({
         where,
         orderBy,
+        include: { bundles: PUBLIC_BUNDLES },
         skip: (page - 1) * pageSize,
         take: pageSize,
       }),
       this.prisma.product.count({ where }),
     ]);
 
-    const withStock = await this.attachAvailableStock(items);
+    const withStock = await this.attachAvailableStock(items.map(hideCost));
     return {
       items: withStock,
       page,
@@ -65,9 +73,10 @@ export class ProductsService {
   async findPublicBySlug(slug: string): Promise<PublicProduct> {
     const product = await this.prisma.product.findFirst({
       where: { slug, status: 'ACTIVE', visibility: 'VISIBLE' },
+      include: { bundles: PUBLIC_BUNDLES },
     });
     if (!product) throw new NotFoundException('Product not found');
-    const [withStock] = await this.attachAvailableStock([product]);
+    const [withStock] = await this.attachAvailableStock([hideCost(product)]);
     return withStock!;
   }
 
@@ -114,31 +123,68 @@ export class ProductsService {
   }
 
   async findByIdAdmin(id: string): Promise<PublicProduct> {
-    const product = await this.prisma.product.findUnique({ where: { id } });
+    const product = await this.prisma.product.findUnique({
+      where: { id },
+      include: { bundles: { orderBy: [{ sortOrder: 'asc' }, { quantity: 'asc' }] } },
+    });
     if (!product) throw new NotFoundException('Product not found');
     const [withStock] = await this.attachAvailableStock([product]);
     return withStock!;
   }
 
   async create(dto: CreateProductDto): Promise<Product> {
-    const { notifyCustomers: _notify, ...data } = dto;
+    const { notifyCustomers: _notify, bundles, ...data } = dto;
     if (data.slug) await this.assertSlugAvailable(data.slug);
     else data.slug = await uniqueSlug(slugify(data.name), async (slug) =>
       Boolean(await this.prisma.product.findUnique({ where: { slug } })),
     );
     await this.assertReferencesExist(data);
-    return this.prisma.product.create({ data: data as Prisma.ProductUncheckedCreateInput });
+    return this.prisma.$transaction(async (tx) => {
+      const product = await tx.product.create({ data: data as Prisma.ProductUncheckedCreateInput });
+      if (bundles) await this.syncBundles(tx, product.id, bundles);
+      return product;
+    });
   }
 
   async update(id: string, dto: UpdateProductDto): Promise<Product> {
-    const { notifyCustomers: _notify, ...data } = dto;
+    const { notifyCustomers: _notify, bundles, ...data } = dto;
     await this.findByIdAdmin(id);
     if (data.slug) await this.assertSlugAvailable(data.slug, id);
     await this.assertReferencesExist(data);
-    return this.prisma.product.update({
-      where: { id },
-      data: data as Prisma.ProductUncheckedUpdateInput,
+    return this.prisma.$transaction(async (tx) => {
+      const product = await tx.product.update({
+        where: { id },
+        data: data as Prisma.ProductUncheckedUpdateInput,
+      });
+      if (bundles) await this.syncBundles(tx, id, bundles);
+      return product;
     });
+  }
+
+  /**
+   * The form sends the whole list. Order lines keep their own label and
+   * price snapshot, so removing a bundle never rewrites history — the
+   * foreign key just goes null.
+   */
+  private async syncBundles(tx: Prisma.TransactionClient, productId: string, bundles: ProductBundleDto[]) {
+    const keepIds = bundles.map((b) => b.id).filter((id): id is string => Boolean(id));
+    await tx.productBundle.deleteMany({ where: { productId, id: { notIn: keepIds } } });
+    for (const [index, bundle] of bundles.entries()) {
+      const data = {
+        label: bundle.label?.trim() || null,
+        quantity: bundle.quantity,
+        price: bundle.price,
+        wholesaleOnly: bundle.wholesaleOnly ?? false,
+        active: bundle.active ?? true,
+        sortOrder: index,
+      };
+      if (bundle.id) {
+        const updated = await tx.productBundle.updateMany({ where: { id: bundle.id, productId }, data });
+        if (updated.count === 0) throw new NotFoundException('Bundle not found on this product');
+      } else {
+        await tx.productBundle.create({ data: { ...data, productId } });
+      }
+    }
   }
 
   private async assertReferencesExist(dto: {
@@ -223,4 +269,9 @@ export class ProductsService {
       throw new ConflictException(`Product slug "${slug}" is already in use`);
     }
   }
+}
+
+/** Cost price is staff-only margin data; the storefront never gets it. */
+function hideCost<T extends Product>(product: T): T {
+  return { ...product, costPrice: null };
 }

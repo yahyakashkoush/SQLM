@@ -1,3 +1,4 @@
+import { E2E_CONTACT } from './fixtures';
 import { INestApplication } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
@@ -14,6 +15,7 @@ import { normalizePhone } from '../src/modules/loyalty/phone';
 import { PaymentProofsService, MAX_PROOFS_PER_ORDER } from '../src/modules/payments/payment-proofs.service';
 import { StaffTelegramService } from '../src/modules/telegram/staff-telegram.service';
 import { StorageService } from '../src/modules/storage/storage.service';
+import { CustomerSecurityService } from '../src/modules/orders/customer-security.service';
 
 /** A valid PNG header plus a random tail: passes the magic-byte check, hashes differently each call. */
 function pngBytes(tail = Math.random().toString(36)): Buffer {
@@ -59,7 +61,7 @@ describe('Moderation, anti-fraud, old customers and cleanup (e2e)', () => {
   const uniqueTelegramId = () => BigInt(Date.now() * 1000 + Math.floor(Math.random() * 1000));
 
   async function newCustomer(data: { verifiedAt?: Date } = {}) {
-    const customer = await prisma.customer.create({ data: { telegramId: uniqueTelegramId(), ...data } });
+    const customer = await prisma.customer.create({ data: { ...E2E_CONTACT, telegramId: uniqueTelegramId(), ...data } });
     customerIds.push(customer.id);
     return { id: customer.id, telegramId: customer.telegramId, token: token(customer.id, 'customer') };
   }
@@ -282,7 +284,7 @@ describe('Moderation, anti-fraud, old customers and cleanup (e2e)', () => {
 
   // ---------------------------------------------------------------------------
   describe('payment proof anti-fraud', () => {
-    it('flags a screenshot that was already used on another order', async () => {
+    it('refuses a receipt another customer already sent, and suspends the sender', async () => {
       const productId = await newProduct();
       const first = await newCustomer();
       const second = await newCustomer();
@@ -291,17 +293,53 @@ describe('Moderation, anti-fraud, old customers and cleanup (e2e)', () => {
       const firstOrder = await checkout(first.token, productId);
       await uploadProof(first.token, firstOrder.id, receipt).expect(201);
       const secondOrder = await checkout(second.token, productId);
-      const uploaded = await uploadProof(second.token, secondOrder.id, receipt).expect(201);
+      const refused = await uploadProof(second.token, secondOrder.id, receipt).expect(409);
+      expect(refused.body.code).toBe('DUPLICATE_PROOF');
 
+      expect(await prisma.paymentProof.count({ where: { orderId: secondOrder.id } })).toBe(0);
+      const sender = await prisma.customer.findUniqueOrThrow({ where: { id: second.id } });
+      expect(sender.suspendedUntil!.getTime()).toBeGreaterThan(Date.now());
+      const strikes = await prisma.customerStrike.findMany({ where: { customerId: second.id } });
+      expect(strikes.map((s) => s.source)).toEqual(['DUPLICATE_PROOF']);
+      // Suspended: the Mini App session stops working at once.
+      await request(app.getHttpServer())
+        .get('/api/v1/orders')
+        .set('Authorization', `Bearer ${second.token}`)
+        .expect(401);
+    });
+
+    it('lets a customer re-send their own receipt after the order it was for expired, and flags it', async () => {
+      const productId = await newProduct();
+      const customer = await newCustomer();
+      const receipt = pngBytes('own-receipt-' + Date.now());
+
+      const expired = await checkout(customer.token, productId);
+      const firstProof = await uploadProof(customer.token, expired.id, receipt).expect(201);
+      await proofs.reject(firstProof.body.id, ownerId, 'الإيصال مش واضح', true);
+
+      const again = await checkout(customer.token, productId);
+      const uploaded = await uploadProof(customer.token, again.id, receipt).expect(201);
       const res = await request(app.getHttpServer())
         .get(`/api/v1/admin/payment-proofs/${uploaded.body.id}`)
         .set('Authorization', `Bearer ${ownerToken}`)
         .expect(200);
       expect(res.body.risk.duplicates).toEqual([
-        { orderId: firstOrder.id, sequenceNumber: firstOrder.sequenceNumber, sameCustomer: false },
+        { orderId: expired.id, sequenceNumber: expired.sequenceNumber, sameCustomer: true },
       ]);
-      expect(res.body.risk.flags[0]).toContain('🚨');
-      expect(res.body.risk.flags.join('\n')).toContain(`#${firstOrder.sequenceNumber}`);
+      expect(await prisma.customerStrike.count({ where: { customerId: customer.id } })).toBe(0);
+    });
+
+    it('stores the number the customer says they paid from, cleaned', async () => {
+      const productId = await newProduct();
+      const customer = await newCustomer();
+      const order = await checkout(customer.token, productId);
+      const res = await request(app.getHttpServer())
+        .post(`/api/v1/orders/${order.id}/payment-proof`)
+        .set('Authorization', `Bearer ${customer.token}`)
+        .field('senderReference', ' 010-1234 5678 <b> ')
+        .attach('file', pngBytes(), { filename: 'receipt.png', contentType: 'image/png' })
+        .expect(201);
+      expect(res.body.senderReference).toBe('010-1234 5678 b');
     });
 
     it(`caps an order at ${MAX_PROOFS_PER_ORDER} proofs`, async () => {
@@ -310,7 +348,7 @@ describe('Moderation, anti-fraud, old customers and cleanup (e2e)', () => {
       const order = await checkout(customer.token, productId);
       for (let i = 0; i < MAX_PROOFS_PER_ORDER; i++) {
         const res = await uploadProof(customer.token, order.id).expect(201);
-        await proofs.reject(res.body.id, ownerId, 'unclear', false);
+        await proofs.reject(res.body.id, ownerId, 'unclear', false, false);
       }
       const refused = await uploadProof(customer.token, order.id).expect(429);
       expect(refused.body.code).toBe('TOO_MANY_PROOFS');
@@ -335,6 +373,67 @@ describe('Moderation, anti-fraud, old customers and cleanup (e2e)', () => {
       expect((await prisma.paymentProof.findUniqueOrThrow({ where: { id: proof.body.id } })).status).toBe('REJECTED');
       expect((await prisma.order.findUniqueOrThrow({ where: { id: order.id } })).status).toBe('CANCELLED');
       expect((await prisma.customer.findUniqueOrThrow({ where: { id: customer.id } })).status).toBe('BANNED');
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  describe('strike ladder and appeals', () => {
+    it('suspends, suspends for longer, then bans — and an accepted appeal restores the account', async () => {
+      const security = app.get(CustomerSecurityService);
+      const customer = await newCustomer();
+
+      const first = await security.recordStrike(customer.id, 'MANUAL', 'one');
+      expect(first.action).toBe('SUSPEND');
+      const second = await security.recordStrike(customer.id, 'MANUAL', 'two');
+      expect(second.action).toBe('SUSPEND');
+      expect(second.until!.getTime()).toBeGreaterThan(first.until!.getTime());
+
+      const third = await security.recordStrike(customer.id, 'MANUAL', 'three');
+      expect(third.action).toBe('BAN');
+      expect((await prisma.customer.findUniqueOrThrow({ where: { id: customer.id } })).status).toBe('BANNED');
+
+      const appeal = await security.submitAppeal(customer.id, 'حد تاني استخدم حسابي، راجعوا من فضلكم');
+      await expect(security.submitAppeal(customer.id, 'تاني مرة لو سمحت')).rejects.toThrow();
+
+      await request(app.getHttpServer())
+        .post(`/api/v1/admin/appeals/${appeal.id}/review`)
+        .set('Authorization', `Bearer ${supportToken}`)
+        .send({ accept: true })
+        .expect(403);
+      await request(app.getHttpServer())
+        .post(`/api/v1/admin/appeals/${appeal.id}/review`)
+        .set('Authorization', `Bearer ${ownerToken}`)
+        .send({ accept: true, response: 'تمام' })
+        .expect(201);
+
+      const restored = await prisma.customer.findUniqueOrThrow({ where: { id: customer.id } });
+      expect(restored.status).toBe('ACTIVE');
+      expect(restored.suspendedUntil).toBeNull();
+      expect(await prisma.customerStrike.count({ where: { customerId: customer.id } })).toBe(0);
+      await expect(security.submitAppeal(customer.id, 'مش موقوف خلاص')).rejects.toThrow();
+    });
+
+    it('refuses a new order past the unpaid-orders-per-hour limit and counts it', async () => {
+      overrides['security.maxUnpaidOrdersPerHour'] = 2;
+      try {
+        const productId = await newProduct();
+        const customer = await newCustomer();
+        await checkout(customer.token, productId);
+        await checkout(customer.token, productId);
+        const refused = await request(app.getHttpServer())
+          .post('/api/v1/orders/checkout')
+          .set('Authorization', `Bearer ${customer.token}`)
+          .send({
+            items: [{ productId, quantity: 1 }],
+            paymentMethodId: methodId,
+            idempotencyKey: `mod-e2e-spam-${Date.now()}`,
+          })
+          .expect(429);
+        expect(refused.body.code).toBe('TOO_MANY_UNPAID_ORDERS');
+        expect(await prisma.customerStrike.count({ where: { customerId: customer.id, source: 'ORDER_SPAM' } })).toBe(1);
+      } finally {
+        delete overrides['security.maxUnpaidOrdersPerHour'];
+      }
     });
   });
 

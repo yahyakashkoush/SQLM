@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { PassportStrategy } from '@nestjs/passport';
 import { ExtractJwt, Strategy } from 'passport-jwt';
 import { PrismaService } from '../../prisma/prisma.service';
+import { isSuspended } from '../../orders/customer-security.service';
 import type { AuthenticatedCustomer } from '../../rbac/decorators/current-customer.decorator';
 
 interface CustomerAccessTokenPayload {
@@ -30,6 +31,9 @@ export class JwtCustomerStrategy extends PassportStrategy(Strategy, 'jwt-custome
     const customer = await this.prisma.customer.findUnique({ where: { id: payload.sub } });
     if (!customer || customer.status !== 'ACTIVE') {
       throw new UnauthorizedException('Account is not active');
+    }
+    if (isSuspended(customer)) {
+      throw new UnauthorizedException('Account is temporarily suspended');
     }
     return { id: customer.id, telegramId: customer.telegramId.toString() };
   }

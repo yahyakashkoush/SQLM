@@ -25,7 +25,17 @@ export type NotificationKind =
   /** A customer's first paid order made them verified. */
   | 'customer.verified'
   | 'broadcast'
-  | 'product.new';
+  | 'product.new'
+  /** A one-off message staff wrote to this customer. */
+  | 'customer.message'
+  /** The customer was suspended or banned (to them) — strike ladder or staff. */
+  | 'customer.restricted'
+  /** Staff: a strike was recorded. */
+  | 'customer.strike'
+  | 'appeal.created'
+  | 'appeal.reviewed'
+  | 'wholesale.applied'
+  | 'wholesale.reviewed';
 
 export interface NotificationPayload {
   kind: NotificationKind;

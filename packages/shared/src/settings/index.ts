@@ -6,7 +6,16 @@
  * Message templates accept `{placeholder}` tokens; see `renderTemplate`.
  */
 export type SettingType = 'text' | 'textarea' | 'boolean' | 'number';
-export type SettingGroup = 'store' | 'pricing' | 'customers' | 'bot' | 'delivery' | 'orders';
+export type SettingGroup =
+  | 'store'
+  | 'site'
+  | 'pricing'
+  | 'customers'
+  | 'wholesale'
+  | 'security'
+  | 'bot'
+  | 'delivery'
+  | 'orders';
 
 export interface SettingDefinition {
   key: string;
@@ -82,6 +91,146 @@ export const SETTING_DEFINITIONS: readonly SettingDefinition[] = [
       '🚫 أي تحويل مزيف أو إيصال معدّل أو مكرر = إلغاء الطلب وحظر نهائي.\n\n' +
       'للاستفسار: {support_contact}',
     placeholders: STORE_PLACEHOLDERS,
+  },
+  {
+    key: 'site.tagline',
+    group: 'site',
+    label: 'Website headline',
+    help: 'The big line at the top of the public website.',
+    type: 'text',
+    default: 'اشتراكاتك الرقمية الأصلية — بسعر أقل، وتسليم في دقايق.',
+  },
+  {
+    key: 'site.about',
+    group: 'site',
+    label: 'About the store (website)',
+    type: 'textarea',
+    default:
+      '{store_name} متجر متخصص في الاشتراكات والأدوات الرقمية الأصلية: أدوات الذكاء الاصطناعي، التصميم، المونتاج، البرمجة، الـ VPN والمزيد.\n\n' +
+      'بنشتغل بالكامل من خلال تيليجرام: بتختار المنتج، بتدفع بالطريقة اللي تناسبك، وبتستلم في الشات. كل منتج عليه ضمان طول مدته، ودعم حقيقي بيرد عليك بنفسه.',
+    placeholders: STORE_PLACEHOLDERS,
+  },
+  {
+    key: 'site.botUrl',
+    group: 'site',
+    label: 'Telegram bot link',
+    help: 'Every "start" button on the website opens this link.',
+    type: 'text',
+    default: 'https://t.me/subsctech_bot',
+  },
+  {
+    key: 'site.terms',
+    group: 'site',
+    label: 'Terms & conditions',
+    help: 'Shown on the website, in the Mini App, and by /terms in the bot.',
+    type: 'textarea',
+    default:
+      'شروط وأحكام {store_name}\n\n' +
+      'باستخدامك للبوت أو المتجر أو الموقع فأنت توافق على الشروط دي بالكامل.\n\n' +
+      '١) المنتجات\n' +
+      '• كل المنتجات اشتراكات وأكواد وحسابات رقمية، بتتسلّم إلكترونياً داخل تيليجرام أو التطبيق.\n' +
+      '• مدة كل اشتراك ونوعه (حساب مشترك / حساب خاص / كود تفعيل) مكتوبين في صفحة المنتج، وهي اللي بتحكم الضمان.\n\n' +
+      '٢) الطلب والدفع\n' +
+      '• الطلب مش بيتأكد إلا بعد ما المبلغ يوصل كامل لحسابنا ونراجعه على كشف الحساب.\n' +
+      '• لازم تحوّل المبلغ بالظبط المكتوب في الطلب، وتكتب الرقم أو الحساب اللي حوّلت منه.\n' +
+      '• الأسعار ممكن تتغير في أي وقت، لكن الطلب اللي اتعمل بيفضل بالسعر اللي اتعمل بيه.\n\n' +
+      '٣) التسليم\n' +
+      '• التسليم {delivery_time} بعد تأكيد الدفع، وأحياناً أسرع.\n' +
+      '• بيانات المنتج بتوصلك على حسابك في تيليجرام بس، ومش هنطلب منك أي باسورد خاص بيك.\n\n' +
+      '٤) الضمان والاسترجاع\n' +
+      '• الضمان ساري طول المدة المكتوبة في صفحة المنتج.\n' +
+      '• لو حصلت مشكلة خلال الضمان بنصلّحها أو نبدّل المنتج. لو مقدرناش، بنرجّع قيمة المدة المتبقية.\n' +
+      '• الضمان بيسقط لو غيّرت بيانات حساب مشترك، أو شاركته، أو فعّلت عليه تحقق بخطوتين، أو استخدمته بطريقة تخالف شروط الخدمة الأصلية.\n' +
+      '• المنتجات الرقمية اللي اتسلّمت واشتغلت مش بتترجّع.\n\n' +
+      '٥) الأمان ومنع الاحتيال\n' +
+      '• أي إيصال مزيف أو معدّل أو مستخدم قبل كده = إلغاء الطلب وحظر نهائي.\n' +
+      '• المحاولات المريبة في الدفع أو الطلبات الوهمية المتكررة بتوقف الحساب مؤقتاً، والتكرار في نفس اليوم بيخلّي الإيقاف أطول أو نهائي.\n' +
+      '• لو حسابك اتوقف بالغلط تقدر تقدّم التماس من البوت وبنراجعه بأنفسنا.\n\n' +
+      '٦) الخصوصية\n' +
+      '• بنحتفظ بالاسم والرقم اللي بتكتبهم في أول طلب علشان نتواصل معاك بخصوص طلباتك بس، ومش بنشاركهم مع أي حد.\n\n' +
+      '٧) التواصل\n' +
+      '• أي استفسار أو مشكلة: {support_contact}',
+    placeholders: STORE_PLACEHOLDERS,
+  },
+  {
+    key: 'wholesale.enabled',
+    group: 'wholesale',
+    label: 'Accept wholesale applications',
+    type: 'boolean',
+    default: true,
+  },
+  {
+    key: 'wholesale.terms',
+    group: 'wholesale',
+    label: 'Wholesale membership terms',
+    help: 'The applicant must accept these before applying.',
+    type: 'textarea',
+    default:
+      'شروط عضوية تجار الجملة — {store_name}\n\n' +
+      '• العضوية للتجار والموزعين اللي بيشتروا بكميات، وبتتراجع يدوياً قبل الموافقة.\n' +
+      '• أسعار الجملة متاحة على الباقات (الكميات) بس، مش على القطعة الواحدة.\n' +
+      '• ممنوع نشر أسعار الجملة أو بيعها بأقل من سعر المتجر.\n' +
+      '• الضمان على منتجات الجملة نفس ضمان المتجر، وبيتقدّم من حساب التاجر بس مش من عملاؤه.\n' +
+      '• أي تحايل أو إعادة بيع لبيانات منتجات مسروقة أو استخدام إيصالات مزيفة = إلغاء العضوية وحظر نهائي.\n' +
+      '• المتجر من حقه يوقف العضوية أو يعدّل الأسعار والشروط في أي وقت.',
+    placeholders: STORE_PLACEHOLDERS,
+  },
+  {
+    key: 'security.strikeWindowHours',
+    group: 'security',
+    label: 'Strike window (hours)',
+    help: 'Suspicious events inside this window count together. Default 24 = "the same day".',
+    type: 'number',
+    default: 24,
+    min: 1,
+    max: 720,
+  },
+  {
+    key: 'security.firstSuspendMinutes',
+    group: 'security',
+    label: '1st strike — suspension (minutes)',
+    type: 'number',
+    default: 60,
+    min: 1,
+    max: 10080,
+  },
+  {
+    key: 'security.secondSuspendHours',
+    group: 'security',
+    label: '2nd strike — suspension (hours)',
+    type: 'number',
+    default: 24,
+    min: 1,
+    max: 720,
+  },
+  {
+    key: 'security.banAfterStrikes',
+    group: 'security',
+    label: 'Permanent ban at strike number',
+    help: 'This many strikes inside the window bans the account for good (it can still appeal).',
+    type: 'number',
+    default: 3,
+    min: 2,
+    max: 20,
+  },
+  {
+    key: 'security.maxUnpaidOrdersPerHour',
+    group: 'security',
+    label: 'Unpaid orders allowed per hour',
+    help: 'Opening more unpaid orders than this in an hour is refused and counts as a strike.',
+    type: 'number',
+    default: 4,
+    min: 1,
+    max: 100,
+  },
+  {
+    key: 'bot.suspendedMessage',
+    group: 'bot',
+    label: 'Message to a temporarily suspended customer',
+    type: 'textarea',
+    default:
+      '⏸️ حسابك موقوف مؤقتاً لحد {until}.\nالسبب: {reason}\n\nلو شايف إن ده غلط اضغط «📝 تقديم التماس» واكتب اللي حصل.',
+    placeholders: ['until', 'reason', ...STORE_PLACEHOLDERS],
   },
   {
     key: 'pricing.egpPerUsd',
@@ -208,7 +357,7 @@ export const SETTING_DEFINITIONS: readonly SettingDefinition[] = [
     help: 'Sent at most twice a day; everything else a banned customer sends is ignored.',
     type: 'textarea',
     default:
-      '🚫 حسابك في {store_name} موقوف بسبب مخالفة شروط الاستخدام.\nلو شايف إن ده حصل بالغلط تواصل مع {support_contact}.',
+      '🚫 حسابك في {store_name} موقوف بسبب مخالفة شروط الاستخدام.\nلو شايف إن ده حصل بالغلط اضغط «📝 تقديم التماس» واكتب اللي حصل، أو تواصل مع {support_contact}.',
     placeholders: STORE_PLACEHOLDERS,
   },
   {

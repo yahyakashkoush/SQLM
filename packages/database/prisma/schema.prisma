@@ -226,6 +226,8 @@ model Staff {
   updatedSettings     PlatformSetting[]
   matchedDeposits     CryptoDeposit[]
   reviewedRewards     SocialRewardClaim[]
+  reviewedAppeals     CustomerAppeal[]       @relation("AppealReviewedBy")
+  reviewedWholesale   WholesaleApplication[] @relation("WholesaleReviewedBy")
 
   @@map("staff")
 }
@@ -270,9 +272,22 @@ model Customer {
   phone              String?
   bannedAt           DateTime?
   banReason          String?
+  /// Typed on the first order, for staff to reach the buyer. Deliberately
+  /// separate from `phone`: that one is Telegram-verified and unlocks the
+  /// old-customer discount, and a typed number must never be able to.
+  fullName           String?
+  contactPhone       String?
+  /// Set when staff approve a wholesale application; unlocks wholesale bundles.
+  wholesaleAt        DateTime?
+  /// Temporary lock from the strike ladder. In the past or null = not suspended.
+  suspendedUntil     DateTime?
+  suspendReason      String?
   createdAt          DateTime       @default(now())
   updatedAt          DateTime       @updatedAt
 
+  strikes               CustomerStrike[]
+  appeals               CustomerAppeal[]
+  wholesaleApplications WholesaleApplication[]
   orders            Order[]
   paymentProofs     PaymentProof[]
   supportTickets    SupportTicket[]
@@ -385,6 +400,7 @@ model Product {
   reviews          ProductReview[]
   socialRewards    SocialRewardClaim[]
   variants         ProductVariant[]
+  bundles          ProductBundle[]
 
   @@index([status, visibility, categoryId])
   @@index([featured])
@@ -507,6 +523,13 @@ model OrderItem {
   fulfillmentTypeSnapshot FulfillmentType
   unitPrice               Decimal         @db.Decimal(12, 2)
   quantity                Int
+  /// What this line costs. Equal to unitPrice × quantity except for a bundle,
+  /// whose price need not divide evenly by its quantity. Null on rows from
+  /// before bundles existed — read it as unitPrice × quantity.
+  lineTotal               Decimal?        @db.Decimal(12, 2)
+  bundleId                String?
+  bundle                  ProductBundle?  @relation(fields: [bundleId], references: [id], onDelete: SetNull)
+  bundleLabel             String?
   createdAt               DateTime        @default(now())
 
   delivery Delivery?
@@ -707,6 +730,9 @@ model PaymentProof {
   /// SHA-256 of the file. The same screenshot turning up on another order
   /// is the commonest fake-payment trick, and this is how it is caught.
   contentHash     String?
+  /// The number or account the customer says the money came from, so the
+  /// reviewer can find the transfer on the statement.
+  senderReference String?
 
   @@index([orderId, status])
   @@index([status])
@@ -1013,4 +1039,108 @@ model CustomerNotification {
 
   @@index([customerId, isRead])
   @@map("customer_notifications")
+}
+
+// =============================================================================
+// Quantity bundles — "5 accounts for less than 5 × the single price".
+// =============================================================================
+
+model ProductBundle {
+  id            String   @id @default(uuid())
+  productId     String
+  product       Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  /// Shown on the option, e.g. "باقة 5 حسابات". Falls back to "{quantity} ×".
+  label         String?
+  quantity      Int
+  /// The price of the whole bundle, not per unit.
+  price         Decimal  @db.Decimal(12, 2)
+  /// Only approved wholesale members see and can buy this bundle.
+  wholesaleOnly Boolean  @default(false)
+  active        Boolean  @default(true)
+  sortOrder     Int      @default(0)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  orderItems OrderItem[]
+
+  @@index([productId, active])
+  @@map("product_bundles")
+}
+
+// =============================================================================
+// Abuse control — strikes, temporary suspensions and appeals.
+// =============================================================================
+
+/// One suspicious event. Strikes inside the ladder window escalate:
+/// short suspension, long suspension, then a permanent ban.
+model CustomerStrike {
+  id             String    @id @default(uuid())
+  customerId     String
+  customer       Customer  @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  /// DUPLICATE_PROOF, PROOF_REJECTED, PROOF_ATTEMPTS, ORDER_SPAM, MANUAL
+  source         String
+  reason         String
+  /// SUSPEND or BAN — what this strike did.
+  action         String
+  suspendedUntil DateTime?
+  createdAt      DateTime  @default(now())
+
+  @@index([customerId, createdAt])
+  @@map("customer_strikes")
+}
+
+enum AppealStatus {
+  PENDING
+  ACCEPTED
+  REJECTED
+}
+
+model CustomerAppeal {
+  id           String       @id @default(uuid())
+  customerId   String
+  customer     Customer     @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  message      String
+  status       AppealStatus @default(PENDING)
+  response     String?
+  reviewedById String?
+  reviewedBy   Staff?       @relation("AppealReviewedBy", fields: [reviewedById], references: [id], onDelete: SetNull)
+  reviewedAt   DateTime?
+  createdAt    DateTime     @default(now())
+
+  @@index([status, createdAt])
+  @@index([customerId])
+  @@map("customer_appeals")
+}
+
+// =============================================================================
+// Wholesale membership
+// =============================================================================
+
+enum WholesaleStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+model WholesaleApplication {
+  id              String          @id @default(uuid())
+  customerId      String
+  customer        Customer        @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  businessName    String
+  contactPhone    String
+  /// Free text: "50 حساب شهرياً", "Canva + ChatGPT"...
+  monthlyVolume   String?
+  notes           String?
+  termsAcceptedAt DateTime
+  status          WholesaleStatus @default(PENDING)
+  staffNote       String?
+  reviewedById    String?
+  reviewedBy      Staff?          @relation("WholesaleReviewedBy", fields: [reviewedById], references: [id], onDelete: SetNull)
+  reviewedAt      DateTime?
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+
+  @@index([status, createdAt])
+  @@index([customerId])
+  @@map("wholesale_applications")
 }

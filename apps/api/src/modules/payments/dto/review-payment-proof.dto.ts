@@ -10,6 +10,11 @@ export class RejectPaymentProofDto {
   @IsOptional()
   @IsBoolean()
   cancelOrder?: boolean;
+
+  /** Count this as a strike against the customer. Default: yes, unless the reason is "unclear photo". */
+  @IsOptional()
+  @IsBoolean()
+  strike?: boolean;
 }
 
 export class ProofInternalNoteDto {

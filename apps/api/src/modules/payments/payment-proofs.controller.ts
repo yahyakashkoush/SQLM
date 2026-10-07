@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  Body,
   Controller,
   Get,
   Param,
@@ -29,9 +30,15 @@ export class PaymentProofsController {
     @Param('orderId') orderId: string,
     @CurrentCustomer() customer: AuthenticatedCustomer,
     @UploadedFile() file?: Express.Multer.File,
+    @Body('senderReference') senderReference?: string,
   ) {
     if (!file) throw new BadRequestException('No file uploaded');
-    return this.paymentProofs.uploadProof(orderId, customer.id, file);
+    return this.paymentProofs.uploadProof(
+      orderId,
+      customer.id,
+      file,
+      typeof senderReference === 'string' ? senderReference : null,
+    );
   }
 
   @Get()

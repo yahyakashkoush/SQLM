@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { ConflictException, ForbiddenException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { nanoid } from 'nanoid';
 import { PrismaService } from '../prisma/prisma.service';
 import { matchesDeclaredType } from '../../common/utils/file-signature';
@@ -7,6 +7,8 @@ import { DeliveryDispatcher } from '../delivery/delivery-dispatcher.service';
 import { NotificationDispatcher } from '../notifications/notification-dispatcher.service';
 import { StorageService } from '../storage/storage.service';
 import { OrdersService } from '../orders/orders.service';
+import { SettingsService } from '../settings/settings.service';
+import { CustomerSecurityService, isRestricted } from '../orders/customer-security.service';
 import {
   OrderNotAwaitingPaymentError,
   ProofAlreadyReviewedError,
@@ -20,6 +22,15 @@ const ALLOWED_MIME_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp', 'ap
 export const MAX_PROOF_FILE_BYTES = 10 * 1024 * 1024;
 /** Honest customers need one, sometimes two. Past this it is guessing or abuse, and it costs disk. */
 export const MAX_PROOFS_PER_ORDER = 5;
+/** Rejections that say nothing about honesty — a blurry photo is not a strike. */
+export const BENIGN_REJECT_REASONS: readonly string[] = ['الإيصال مش واضح'];
+export const MAX_SENDER_REFERENCE_LENGTH = 64;
+
+/** Digits, letters, @ . _ - + and spaces: a phone, an InstaPay handle, an account number. */
+export function cleanSenderReference(raw: string | undefined | null): string | null {
+  const value = (raw ?? '').replace(/[^\p{L}\p{N}@._+\- ]/gu, '').replace(/\s+/g, ' ').trim();
+  return value ? value.slice(0, MAX_SENDER_REFERENCE_LENGTH) : null;
+}
 
 export interface UploadedProofFile {
   buffer: Buffer;
@@ -38,6 +49,8 @@ export class PaymentProofsService {
     private readonly orders: OrdersService,
     private readonly delivery: DeliveryDispatcher,
     private readonly notifications: NotificationDispatcher,
+    private readonly security: CustomerSecurityService,
+    private readonly settings: SettingsService,
   ) {}
 
   /**
@@ -47,7 +60,7 @@ export class PaymentProofsService {
    * "not awaiting payment" conflict instead of creating a duplicate
    * submission — no separate dedup bookkeeping needed.
    */
-  async uploadProof(orderId: string, customerId: string, file: UploadedProofFile) {
+  async uploadProof(orderId: string, customerId: string, file: UploadedProofFile, senderReference?: string | null) {
     if (file.buffer.length > MAX_PROOF_FILE_BYTES) throw new ProofFileTooLargeError(MAX_PROOF_FILE_BYTES);
     if (!ALLOWED_MIME_TYPES.has(file.mimetype)) {
       throw new UnsupportedProofFileTypeError(file.mimetype);
@@ -58,14 +71,42 @@ export class PaymentProofsService {
       throw new UnsupportedProofFileTypeError(`${file.mimetype} (content does not match)`);
     }
 
-    const order = await this.prisma.order.findFirst({ where: { id: orderId, customerId } });
+    const order = await this.prisma.order.findFirst({
+      where: { id: orderId, customerId },
+      include: { customer: { select: { status: true, suspendedUntil: true } } },
+    });
     if (!order) throw new NotFoundException('Order not found');
+    if (isRestricted(order.customer)) throw new ForbiddenException('حسابك موقوف حالياً.');
     if (order.status !== 'PENDING_PAYMENT') {
       throw new OrderNotAwaitingPaymentError(orderId);
     }
     const attempts = await this.prisma.paymentProof.count({ where: { orderId } });
-    if (attempts >= MAX_PROOFS_PER_ORDER) throw new TooManyProofAttemptsError(MAX_PROOFS_PER_ORDER);
+    if (attempts >= MAX_PROOFS_PER_ORDER) {
+      await this.security.recordStrike(customerId, 'PROOF_ATTEMPTS', `رفع ${attempts + 1} إيصالات لنفس الطلب`);
+      throw new TooManyProofAttemptsError(MAX_PROOFS_PER_ORDER);
+    }
     const contentHash = createHash('sha256').update(file.buffer).digest('hex');
+
+    // A screenshot proves one transfer. The same bytes from another
+    // customer, or already accepted or still under review on another order,
+    // are a copy: refused before a reviewer ever sees them, and counted.
+    // The one honest reuse — the same customer re-sending the receipt for
+    // an order that expired unpaid — goes through and is flagged instead.
+    const earlier = await this.prisma.paymentProof.findMany({
+      where: { contentHash, orderId: { not: orderId } },
+      select: { customerId: true, status: true, order: { select: { paidAt: true } } },
+      take: 10,
+    });
+    const reused = earlier.some(
+      (p) => p.customerId !== customerId || p.status !== 'REJECTED' || p.order.paidAt !== null,
+    );
+    if (reused) {
+      await this.security.recordStrike(customerId, 'DUPLICATE_PROOF', 'استخدام صورة إيصال اتبعتت قبل كده على طلب تاني');
+      throw new ConflictException({
+        code: 'DUPLICATE_PROOF',
+        message: 'الإيصال ده اتبعت قبل كده على طلب تاني. ابعت إيصال التحويل الخاص بالطلب ده بس.',
+      });
+    }
 
     const extension = file.originalname.split('.').pop()?.slice(0, 10) ?? 'bin';
     const storageKey = `payment-proofs/${orderId}/${nanoid()}.${extension}`;
@@ -80,6 +121,7 @@ export class PaymentProofsService {
           mimeType: file.mimetype,
           fileSize: file.size,
           contentHash,
+          senderReference: cleanSenderReference(senderReference),
           status: 'PENDING',
         },
       });
@@ -176,8 +218,14 @@ export class PaymentProofsService {
     return result;
   }
 
-  async reject(proofId: string, staffId: string, reason: string, cancelOrder: boolean) {
-    return this.prisma.$transaction(async (tx) => {
+  /**
+   * Strikes, unless staff say otherwise: one rejected receipt is a warning
+   * (the message invites a corrected one), the second suspicious rejection
+   * inside the window is a strike, and a rejection that also cancels the
+   * order is one straight away. A blurry photo never counts.
+   */
+  async reject(proofId: string, staffId: string, reason: string, cancelOrder: boolean, strike?: boolean) {
+    const rejected = await this.prisma.$transaction(async (tx) => {
       const proof = await tx.paymentProof.findUnique({ where: { id: proofId } });
       if (!proof) throw new NotFoundException('Payment proof not found');
 
@@ -206,6 +254,36 @@ export class PaymentProofsService {
 
       return tx.paymentProof.findUniqueOrThrow({ where: { id: proofId } });
     });
+    if (strike ?? (await this.rejectionIsStrike(rejected.customerId, reason, cancelOrder))) {
+      await this.security.recordStrike(rejected.customerId, 'PROOF_REJECTED', `إيصال مرفوض: ${reason}`);
+    }
+    return rejected;
+  }
+
+  private async rejectionIsStrike(customerId: string, reason: string, cancelOrder: boolean): Promise<boolean> {
+    if (BENIGN_REJECT_REASONS.includes(reason.trim())) return false;
+    if (cancelOrder) return true;
+    const hours = await this.settings.getNumber('security.strikeWindowHours');
+    const recent = await this.prisma.paymentProof.count({
+      where: {
+        customerId,
+        status: 'REJECTED',
+        reviewedAt: { gte: new Date(Date.now() - hours * 3_600_000) },
+        rejectionReason: { notIn: [...BENIGN_REJECT_REASONS] },
+      },
+    });
+    return recent >= 2;
+  }
+
+  /** The customer types the number they paid from after sending the photo in the bot. */
+  async setSenderReference(proofId: string, customerId: string, raw: string) {
+    const value = cleanSenderReference(raw);
+    if (!value) return null;
+    const updated = await this.prisma.paymentProof.updateMany({
+      where: { id: proofId, customerId, status: 'PENDING' },
+      data: { senderReference: value },
+    });
+    return updated.count > 0 ? value : null;
   }
 
   async addInternalNote(proofId: string, note: string) {

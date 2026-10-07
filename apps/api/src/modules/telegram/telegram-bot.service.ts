@@ -1,4 +1,4 @@
-import { Injectable, Logger, OnModuleInit, ServiceUnavailableException } from '@nestjs/common';
+import { HttpException, Injectable, Logger, OnModuleInit, ServiceUnavailableException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Bot, InlineKeyboard, InputFile, type Context } from 'grammy';
 import type { InlineKeyboardMarkup } from 'grammy/types';
@@ -32,6 +32,12 @@ import {
 } from './staff-telegram.service';
 import type { StaffAlert } from './staff-alert.renderer';
 import { FLOOD_MUTE_SECONDS } from './bot-guard.service';
+import { BotAdminPanelService } from './bot-admin-panel.service';
+import {
+  CustomerSecurityService,
+  formatUntil,
+  isSuspended,
+} from '../orders/customer-security.service';
 
 const INIT_TIMEOUT_MS = 8000;
 const INIT_RETRY_INTERVAL_MS = 30_000;
@@ -46,6 +52,18 @@ const MAX_TEXT_LENGTH = 2000;
 const BAN_NOTICE_TTL_SECONDS = 12 * 60 * 60;
 
 const searchArmKey = (chatId: number) => `tg:search-arm:${chatId}`;
+const appealArmKey = (chatId: number) => `tg:appeal-arm:${chatId}`;
+const proofSenderKey = (chatId: number) => `tg:proof-sender:${chatId}`;
+const APPEAL_ARM_TTL_SECONDS = 15 * 60;
+const PROOF_SENDER_TTL_SECONDS = 30 * 60;
+const APPEAL_CALLBACK = 'appeal';
+
+interface Restriction {
+  customerId: string;
+  banned: boolean;
+  until: Date | null;
+  reason: string | null;
+}
 
 const UUID = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}';
 /** Callback data for payment review: approve, reject (show reasons), a
@@ -109,6 +127,7 @@ export const BOT_COMMANDS = [
   { command: 'account', description: 'حسابي' },
   { command: 'support', description: 'الدعم الفني' },
   { command: 'rules', description: 'الضمان والشروط' },
+  { command: 'terms', description: 'الشروط والأحكام' },
 ];
 
 /**
@@ -140,6 +159,8 @@ export class TelegramBotService implements OnModuleInit {
     private readonly loyalty: LoyaltyService,
     private readonly legacy: LegacyCustomersService,
     private readonly giftsService: GiftsService,
+    private readonly adminPanel: BotAdminPanelService,
+    private readonly security: CustomerSecurityService,
   ) {
     const token = this.config.get<string>('TELEGRAM_BOT_TOKEN') || 'unset:unset';
     this.bot = new Bot(token);
@@ -397,13 +418,23 @@ export class TelegramBotService implements OnModuleInit {
   // ---------------------------------------------------------------------------
 
   private registerHandlers(): void {
-    // First in the chain: a banned customer reaches no handler at all.
+    // First in the chain: a banned or suspended customer reaches no
+    // handler — except the appeal button and the appeal they then type.
     this.bot.use(async (ctx, next) => {
-      if (ctx.from && (await this.isBanned(ctx.from.id))) {
-        await this.noticeBanned(ctx);
+      if (!ctx.from) return next();
+      const restriction = await this.restrictionOf(ctx.from.id);
+      if (!restriction || (await this.adminPanel.isAdmin(ctx.from.id))) return next();
+
+      if (ctx.callbackQuery?.data === APPEAL_CALLBACK) {
+        await this.armAppeal(ctx);
         return;
       }
-      await next();
+      const text = ctx.message?.text?.trim();
+      if (text && !text.startsWith('/') && (await this.consumeArm(appealArmKey(ctx.chat!.id)))) {
+        await this.fileAppeal(ctx, restriction.customerId, text);
+        return;
+      }
+      await this.noticeRestricted(ctx, restriction);
     });
 
     this.bot.command('start', async (ctx) => {
@@ -428,6 +459,7 @@ export class TelegramBotService implements OnModuleInit {
       await ctx.reply('اضغط للدخول للمتجر 👇', {
         reply_markup: buildWebAppButton('🛍️ افتح المتجر', this.miniAppUrl),
       });
+      if (ctx.from && (await this.adminPanel.isAdmin(ctx.from.id))) await this.adminPanel.showHome(ctx);
     });
 
     this.bot.command('orders', async (ctx) => this.replyWithOrders(ctx));
@@ -435,6 +467,9 @@ export class TelegramBotService implements OnModuleInit {
     this.bot.command('support', async (ctx) => this.handleMenu(ctx, 'SUPPORT'));
 
     this.bot.command('rules', async (ctx) => this.handleMenu(ctx, 'RULES'));
+    this.bot.command('terms', async (ctx) => this.handleMenu(ctx, 'TERMS'));
+
+    this.adminPanel.register(this.bot);
 
     this.bot.on(['message:photo', 'message:document'], async (ctx) => this.handleProofUpload(ctx));
     this.bot.on('message:contact', async (ctx) => this.handleSharedContact(ctx));
@@ -453,6 +488,10 @@ export class TelegramBotService implements OnModuleInit {
 
       // A staff member who tapped "other reason" is typing the reason.
       if (await this.consumeRejectReason(ctx, text)) return;
+      // A staff member mid-way through a panel action (search, message).
+      if (await this.adminPanel.consumeText(ctx, text)) return;
+      // The number the customer paid from, right after their receipt.
+      if (await this.consumeProofSender(ctx, text)) return;
 
       if (text === CANCEL_SHARE_LABEL) {
         await ctx.reply('تمام 👌', { reply_markup: buildMainMenuKeyboard() });
@@ -657,6 +696,17 @@ export class TelegramBotService implements OnModuleInit {
         await ctx.reply(renderTemplate(await this.settings.getString('store.rules'), values), {
           reply_markup: buildWebAppButton('🛍️ افتح المتجر', this.miniAppUrl),
         });
+        return;
+      case 'TERMS':
+        await ctx.reply(renderTemplate(await this.settings.getString('site.terms'), values).slice(0, 4000), {
+          reply_markup: buildWebAppButton('📄 الشروط في المتجر', `${this.miniAppUrl}/terms`),
+        });
+        return;
+      case 'WHOLESALE':
+        await ctx.reply(
+          '🏪 عضوية تجار الجملة\n\nلو بتشتري بكميات أو بتبيع لعملاء، قدّم على عضوية الجملة وهتظهرلك أسعار خاصة على الباقات بعد الموافقة.',
+          { reply_markup: buildWebAppButton('🏪 قدّم على العضوية', `${this.miniAppUrl}/wholesale`) },
+        );
         return;
       case 'GIFTS':
         await this.replyWithGifts(ctx);
@@ -877,17 +927,30 @@ export class TelegramBotService implements OnModuleInit {
       const buffer = Buffer.from(await res.arrayBuffer());
       const extension = file.file_path?.split('.').pop() ?? (mimeType === 'application/pdf' ? 'pdf' : 'jpg');
 
-      await this.paymentProofs.uploadProof(order.id, customer.id, {
-        buffer,
-        mimetype: mimeType,
-        size: buffer.length,
-        originalname: `telegram.${extension}`,
-      });
+      // A caption with digits in it is the number they paid from.
+      const caption = ctx.message.caption?.trim();
+      const fromCaption = caption && /\d{5,}/.test(caption.replace(/\s|-/g, '')) ? caption : null;
+      const proof = await this.paymentProofs.uploadProof(
+        order.id,
+        customer.id,
+        { buffer, mimetype: mimeType, size: buffer.length, originalname: `telegram.${extension}` },
+        fromCaption,
+      );
       await ctx.reply(
         `✅ تم استلام إثبات الدفع لطلب #${order.sequenceNumber}.\nجاري المراجعة وهنبلغك أول ما يتأكد.`,
         { reply_markup: buildWebAppButton('متابعة الطلب', `${this.miniAppUrl}/orders/${order.id}`) },
       );
+      if (!proof.senderReference && ctx.chat) {
+        await this.redis.client.set(proofSenderKey(ctx.chat.id), proof.id, 'EX', PROOF_SENDER_TTL_SECONDS);
+        await ctx.reply('📱 اكتب الرقم (أو حساب إنستاباي) اللي حوّلت منه — علشان نلاقي التحويل بسرعة.');
+      }
     } catch (err) {
+      if (err instanceof HttpException && err.getStatus() < 500) {
+        const body = err.getResponse();
+        const message = typeof body === 'object' && body && 'message' in body ? String((body as { message: unknown }).message) : err.message;
+        await ctx.reply(`⚠️ ${message}`);
+        return;
+      }
       this.logger.warn(`Telegram proof upload failed for order ${order.id}: ${err instanceof Error ? err.message : err}`);
       await ctx.reply('⚠️ حصلت مشكلة في رفع الإيصال. جرّب تاني أو ارفعه من صفحة الطلب في التطبيق.', {
         reply_markup: buildWebAppButton('صفحة الطلب', `${this.miniAppUrl}/orders/${order.id}`),
@@ -895,20 +958,76 @@ export class TelegramBotService implements OnModuleInit {
     }
   }
 
-  private async isBanned(telegramId: number): Promise<boolean> {
+  private async restrictionOf(telegramId: number): Promise<Restriction | null> {
     const customer = await this.prisma.customer.findUnique({
       where: { telegramId: BigInt(telegramId) },
-      select: { status: true },
+      select: { id: true, status: true, banReason: true, suspendedUntil: true, suspendReason: true },
     });
-    return customer?.status === 'BANNED';
+    if (!customer) return null;
+    if (customer.status === 'BANNED') {
+      return { customerId: customer.id, banned: true, until: null, reason: customer.banReason };
+    }
+    if (isSuspended(customer)) {
+      return { customerId: customer.id, banned: false, until: customer.suspendedUntil, reason: customer.suspendReason };
+    }
+    return null;
   }
 
-  private async noticeBanned(ctx: Context): Promise<void> {
+  /** /start always answers; anything else hears the notice at most twice a day. */
+  private async noticeRestricted(ctx: Context, restriction: Restriction): Promise<void> {
     if (ctx.callbackQuery) await ctx.answerCallbackQuery().catch(() => undefined);
     if (!ctx.chat || ctx.chat.type !== 'private') return;
-    if (!(await this.redis.claimOnce(`tg:ban-notice:${ctx.from!.id}`, BAN_NOTICE_TTL_SECONDS))) return;
-    const text = renderTemplate(await this.settings.getString('bot.bannedMessage'), await this.settings.storeValues());
-    await ctx.reply(text).catch(() => undefined);
+    const isStart = ctx.message?.text?.startsWith('/start') ?? false;
+    if (!isStart && !(await this.redis.claimOnce(`tg:ban-notice:${ctx.from!.id}`, BAN_NOTICE_TTL_SECONDS))) return;
+
+    const values = await this.settings.storeValues();
+    const text = restriction.banned
+      ? renderTemplate(await this.settings.getString('bot.bannedMessage'), values)
+      : renderTemplate(await this.settings.getString('bot.suspendedMessage'), {
+          ...values,
+          until: formatUntil(restriction.until!),
+          reason: restriction.reason ?? '—',
+        });
+    await ctx
+      .reply(text, { reply_markup: new InlineKeyboard().text('📝 تقديم التماس', APPEAL_CALLBACK) })
+      .catch(() => undefined);
+  }
+
+  private async armAppeal(ctx: Context): Promise<void> {
+    await ctx.answerCallbackQuery().catch(() => undefined);
+    if (!ctx.chat) return;
+    await this.redis.client.set(appealArmKey(ctx.chat.id), '1', 'EX', APPEAL_ARM_TTL_SECONDS);
+    await ctx.reply('✍️ اكتب في رسالة واحدة اللي حصل وليه شايف إن الإيقاف غلط — وهنراجعها بأنفسنا.');
+  }
+
+  private async fileAppeal(ctx: Context, customerId: string, text: string): Promise<void> {
+    try {
+      await this.security.submitAppeal(customerId, text);
+      await ctx.reply('✅ وصلنا التماسك وهنرد عليك هنا في أقرب وقت.');
+    } catch (err) {
+      await ctx.reply(`⚠️ ${err instanceof Error ? err.message : 'حصلت مشكلة، جرّب تاني.'}`);
+    }
+  }
+
+  /** GETDEL: true exactly once per arm. A Redis hiccup reads as "not armed". */
+  private async consumeArm(key: string): Promise<string | null> {
+    try {
+      return await this.redis.client.getdel(key);
+    } catch (err) {
+      this.logger.error(`Arm lookup failed for ${key}: ${err instanceof Error ? err.message : err}`);
+      return null;
+    }
+  }
+
+  private async consumeProofSender(ctx: Context, text: string): Promise<boolean> {
+    if (!ctx.chat || !/\d{5,}|@/.test(text.replace(/\s|-/g, ''))) return false;
+    const proofId = await this.consumeArm(proofSenderKey(ctx.chat.id));
+    if (!proofId) return false;
+    const customer = await this.upsertCustomer(ctx);
+    if (!customer) return true;
+    const saved = await this.paymentProofs.setSenderReference(proofId, customer.id, text);
+    await ctx.reply(saved ? `👍 تمام، سجّلنا رقم التحويل: ${saved}` : 'الإيصال ده اتراجع خلاص 👌');
+    return true;
   }
 
   private async upsertCustomer(ctx: Context) {

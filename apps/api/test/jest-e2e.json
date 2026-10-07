@@ -11,5 +11,6 @@
     "^.+\\.(t|j)s$": "ts-jest"
   },
   "forceExit": true,
-  "testTimeout": 30000
+  "testTimeout": 30000,
+  "globalSetup": "<rootDir>/global-setup.ts"
 }

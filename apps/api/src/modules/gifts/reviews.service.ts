@@ -53,20 +53,7 @@ export class ReviewsService {
         },
       });
 
-      // Recalculate product rating
-      const agg = await tx.productReview.aggregate({
-        where: { productId: dto.productId },
-        _avg: { rating: true },
-        _count: { id: true },
-      });
-
-      await tx.product.update({
-        where: { id: dto.productId },
-        data: {
-          ratingScore: agg._avg.rating ?? 0,
-          reviewCount: agg._count.id,
-        },
-      });
+      // The stars on a product are set by staff; a review never moves them.
 
       return created;
     });
@@ -131,19 +118,6 @@ export class ReviewsService {
     await this.prisma.$transaction(async (tx) => {
       await tx.productReview.delete({ where: { id: reviewId } });
 
-      const agg = await tx.productReview.aggregate({
-        where: { productId: review.productId },
-        _avg: { rating: true },
-        _count: { id: true },
-      });
-
-      await tx.product.update({
-        where: { id: review.productId },
-        data: {
-          ratingScore: agg._avg.rating ?? 0,
-          reviewCount: agg._count.id,
-        },
-      });
     });
   }
 }

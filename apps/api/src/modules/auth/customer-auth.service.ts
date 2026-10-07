@@ -1,8 +1,9 @@
-import { Injectable, Logger, UnauthorizedException } from '@nestjs/common';
+import { ForbiddenException, Injectable, Logger, UnauthorizedException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import { verifyTelegramInitData, TelegramInitDataError } from '@sqlm/shared/crypto';
 import { CustomersService } from '../customers/customers.service';
+import { isSuspended } from '../orders/customer-security.service';
 
 export interface CustomerAuthResult {
   accessToken: string;
@@ -38,7 +39,14 @@ export class CustomerAuthService {
     const customer = await this.customers.upsertFromTelegram(verified.user);
 
     if (customer.status !== 'ACTIVE') {
-      throw new UnauthorizedException('This account has been suspended');
+      throw new ForbiddenException({ code: 'ACCOUNT_BANNED', message: customer.banReason ?? 'This account has been suspended' });
+    }
+    if (isSuspended(customer)) {
+      throw new ForbiddenException({
+        code: 'ACCOUNT_SUSPENDED',
+        message: customer.suspendReason ?? 'This account is temporarily suspended',
+        until: customer.suspendedUntil!.toISOString(),
+      });
     }
 
     const accessToken = this.jwt.sign(

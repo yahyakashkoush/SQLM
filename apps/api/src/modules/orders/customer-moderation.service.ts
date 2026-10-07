@@ -35,7 +35,8 @@ export class CustomerModerationService {
     private readonly audit: AuditService,
   ) {}
 
-  async ban(customerId: string, staffId: string, reason: string): Promise<BanResult> {
+  /** `staffId` null = the strike ladder banned the account on its own. */
+  async ban(customerId: string, staffId: string | null, reason: string): Promise<BanResult> {
     const customer = await this.prisma.customer.findUnique({ where: { id: customerId }, select: { id: true } });
     if (!customer) throw new NotFoundException('Customer not found');
     const why = reason.trim().slice(0, 300) || 'مخالفة شروط الاستخدام';
@@ -58,7 +59,13 @@ export class CustomerModerationService {
             where: { orderId: id, status: 'PENDING' },
             data: { status: 'REJECTED', rejectionReason: why, reviewedById: staffId, reviewedAt: new Date() },
           });
-          await this.orders.transition(tx, id, 'CANCELLED', { type: 'STAFF', staffId }, `تم إيقاف الحساب: ${why}`);
+          await this.orders.transition(
+            tx,
+            id,
+            'CANCELLED',
+            staffId ? { type: 'STAFF', staffId } : { type: 'SYSTEM' },
+            `تم إيقاف الحساب: ${why}`,
+          );
         });
         cancelledOrders++;
       } catch (err) {
@@ -68,8 +75,8 @@ export class CustomerModerationService {
     }
 
     await this.audit.log({
-      actorStaffId: staffId,
-      action: 'customer.banned',
+      actorStaffId: staffId ?? undefined,
+      action: staffId ? 'customer.banned' : 'customer.auto_banned',
       entityType: 'customer',
       entityId: customerId,
       changes: { reason: why, cancelledOrders },
@@ -82,7 +89,7 @@ export class CustomerModerationService {
     if (!customer) throw new NotFoundException('Customer not found');
     await this.prisma.customer.update({
       where: { id: customerId },
-      data: { status: 'ACTIVE', bannedAt: null, banReason: null },
+      data: { status: 'ACTIVE', bannedAt: null, banReason: null, suspendedUntil: null, suspendReason: null },
     });
     await this.audit.log({
       actorStaffId: staffId,

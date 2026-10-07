@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { Prisma, type MemberDiscountKind, type PaymentMethod, type Product } from '@prisma/client';
+import { Prisma, type MemberDiscountKind, type PaymentMethod, type Product, type ProductBundle } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { SettingsService } from '../settings/settings.service';
 import { CouponsService, type CouponQuote } from '../coupons/coupons.service';
@@ -9,13 +9,29 @@ import { convertForPayment, type PaymentConversion } from './payment-currency';
 
 export interface CartLine {
   productId: string;
+  /** Units, or — with `bundleId` — how many of that bundle. */
   quantity: number;
+  bundleId?: string;
+}
+
+export interface PricedLine {
+  product: Product;
+  bundle: ProductBundle | null;
+  /** Units to reserve and deliver. */
+  units: number;
+  unitPrice: Prisma.Decimal;
+  lineTotal: Prisma.Decimal;
 }
 
 export interface PricedCart {
   currency: string;
   subtotal: Prisma.Decimal;
   productById: Map<string, Product>;
+  lines: PricedLine[];
+}
+
+export function bundleLabel(bundle: Pick<ProductBundle, 'label' | 'quantity'>): string {
+  return bundle.label?.trim() || `باقة ${bundle.quantity}`;
 }
 
 /**
@@ -59,7 +75,7 @@ export class CartPricingService {
    * worth.
    */
   async quote(customerId: string, items: CartLine[], couponCode?: string): Promise<OrderQuote> {
-    const cart = await this.priceCart(items);
+    const cart = await this.priceCart(items, customerId);
 
     const entitlement = await this.loyalty.memberDiscountFor(customerId);
     const member = entitlement
@@ -96,7 +112,12 @@ export class CartPricingService {
     return convertForPayment(total, orderCurrency, target, rate);
   }
 
-  async priceCart(items: CartLine[]): Promise<PricedCart> {
+  /**
+   * A bundle line is priced from the bundle row, never from anything the
+   * client sent: the client names a bundle, the database says what it
+   * costs, how many units it is, and whether this customer may buy it.
+   */
+  async priceCart(items: CartLine[], customerId?: string): Promise<PricedCart> {
     if (items.length === 0) {
       throw new ProductNotPurchasableError('(empty cart)');
     }
@@ -105,8 +126,16 @@ export class CartPricingService {
     const products = await this.prisma.product.findMany({ where: { id: { in: productIds } } });
     const productById = new Map(products.map((p) => [p.id, p]));
 
+    const bundleIds = [...new Set(items.map((i) => i.bundleId).filter((id): id is string => Boolean(id)))];
+    const bundles = bundleIds.length
+      ? await this.prisma.productBundle.findMany({ where: { id: { in: bundleIds } } })
+      : [];
+    const bundleById = new Map(bundles.map((b) => [b.id, b]));
+    let isWholesale: boolean | null = null;
+
     let currency: string | undefined;
     let subtotal = new Prisma.Decimal(0);
+    const lines: PricedLine[] = [];
 
     for (const item of items) {
       const product = productById.get(item.productId);
@@ -118,9 +147,43 @@ export class CartPricingService {
         throw new ProductNotPurchasableError(item.productId);
       }
       currency = product.currency;
-      subtotal = subtotal.add(product.price.mul(item.quantity));
+
+      if (item.bundleId) {
+        const bundle = bundleById.get(item.bundleId);
+        if (!bundle || !bundle.active || bundle.productId !== product.id) {
+          throw new ProductNotPurchasableError(item.productId);
+        }
+        if (bundle.wholesaleOnly) {
+          isWholesale ??= await this.isWholesale(customerId);
+          if (!isWholesale) throw new ProductNotPurchasableError(item.productId);
+        }
+        const lineTotal = bundle.price.mul(item.quantity);
+        const units = bundle.quantity * item.quantity;
+        lines.push({
+          product,
+          bundle,
+          units,
+          unitPrice: lineTotal.div(units).toDecimalPlaces(2),
+          lineTotal,
+        });
+        subtotal = subtotal.add(lineTotal);
+        continue;
+      }
+
+      const lineTotal = product.price.mul(item.quantity);
+      lines.push({ product, bundle: null, units: item.quantity, unitPrice: product.price, lineTotal });
+      subtotal = subtotal.add(lineTotal);
     }
 
-    return { currency: currency!, subtotal, productById };
+    return { currency: currency!, subtotal, productById, lines };
+  }
+
+  private async isWholesale(customerId: string | undefined): Promise<boolean> {
+    if (!customerId) return false;
+    const customer = await this.prisma.customer.findUnique({
+      where: { id: customerId },
+      select: { wholesaleAt: true },
+    });
+    return Boolean(customer?.wholesaleAt);
   }
 }

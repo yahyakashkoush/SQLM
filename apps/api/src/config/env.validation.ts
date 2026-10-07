@@ -36,6 +36,8 @@ export const envSchema = z.object({
   TELEGRAM_BOT_TOKEN: optionalString(z.string().min(1)),
   TELEGRAM_WEBHOOK_SECRET: optionalString(z.string().min(1)),
   TELEGRAM_WEBHOOK_URL: optionalString(z.string().url()),
+  /** Comma-separated Telegram user ids that act as the store owner in the bot. */
+  TELEGRAM_ADMIN_IDS: optionalString(z.string().regex(/^\s*\d+(\s*,\s*\d+)*\s*$/)),
 
   S3_ENDPOINT: optionalString(z.string().min(1)),
   S3_REGION: z.string().default('us-east-1'),

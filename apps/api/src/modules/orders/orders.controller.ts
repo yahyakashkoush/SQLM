@@ -1,5 +1,6 @@
 import { Body, Controller, Get, HttpCode, Param, Post, Query, UseGuards } from '@nestjs/common';
 import { OrdersService } from './orders.service';
+import { CustomerSecurityService } from './customer-security.service';
 import { CheckoutDto, QuoteOrderDto } from './dto/checkout.dto';
 import { CancelOrderDto } from './dto/cancel-order.dto';
 import { OrderQueryDto } from './dto/order-query.dto';
@@ -12,10 +13,17 @@ import {
 @Controller('orders')
 @UseGuards(JwtCustomerAuthGuard)
 export class OrdersController {
-  constructor(private readonly orders: OrdersService) {}
+  constructor(
+    private readonly orders: OrdersService,
+    private readonly security: CustomerSecurityService,
+  ) {}
 
   @Post('checkout')
-  checkout(@CurrentCustomer() customer: AuthenticatedCustomer, @Body() dto: CheckoutDto) {
+  async checkout(@CurrentCustomer() customer: AuthenticatedCustomer, @Body() dto: CheckoutDto) {
+    // A retried checkout is not a new order and must not count against the limit.
+    if (!(await this.orders.hasOrderWithKey(customer.id, dto.idempotencyKey))) {
+      await this.security.assertCanOpenOrder(customer.id);
+    }
     return this.orders.checkout(customer.id, dto);
   }
 

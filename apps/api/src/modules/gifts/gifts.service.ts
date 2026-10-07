@@ -319,6 +319,7 @@ export class GiftsService {
     });
     return products.map((p) => ({
       ...p,
+      costPrice: null,
       remainingClaims:
         p.maxGiftClaims !== null ? Math.max(0, p.maxGiftClaims - p.giftClaimsCount) : null,
       isSoldOut: p.maxGiftClaims !== null && p.giftClaimsCount >= p.maxGiftClaims,

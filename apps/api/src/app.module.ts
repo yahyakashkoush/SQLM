@@ -31,6 +31,7 @@ import { CryptoWatchModule } from './modules/crypto-payments/crypto-watch.module
 import { CryptoPaymentsModule } from './modules/crypto-payments/crypto-payments.module';
 import { SettingsModule } from './modules/settings/settings.module';
 import { GiftsModule } from './modules/gifts/gifts.module';
+import { WholesaleModule } from './modules/wholesale/wholesale.module';
 
 @Module({
   imports: [
@@ -110,6 +111,7 @@ import { GiftsModule } from './modules/gifts/gifts.module';
     CryptoWatchModule,
     CryptoPaymentsModule,
     GiftsModule,
+    WholesaleModule,
   ],
   controllers: [AppController],
   providers: [{ provide: APP_GUARD, useClass: ThrottlerGuard }],
