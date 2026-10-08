@@ -1,0 +1,104 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    /* One deliberate palette: warm paper, ink, and Telegram blue. */
+    --paper: 247 245 240;
+    --paper-deep: 238 234 225;
+    --ink: 19 21 27;
+    --ink-soft: 88 92 104;
+    --line: 226 221 210;
+    --tg: 42 171 238;
+    --tg-deep: 22 120 186;
+    --saffron: 236 160 52;
+
+    /* Tokens the shared UI package reads. */
+    --background: 43 27% 95%;
+    --foreground: 228 17% 9%;
+    --border: 41 22% 85%;
+    --radius: 0.875rem;
+    color-scheme: light;
+  }
+
+  * {
+    @apply border-line;
+  }
+
+  html {
+    scroll-behavior: smooth;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  body {
+    @apply bg-paper font-sans text-ink antialiased;
+    font-feature-settings: 'ss01';
+  }
+
+  h1,
+  h2,
+  h3 {
+    @apply font-display;
+    text-wrap: balance;
+  }
+
+  ::selection {
+    background: rgb(var(--tg) / 0.25);
+  }
+
+  :focus-visible {
+    outline: 2px solid rgb(var(--tg-deep));
+    outline-offset: 3px;
+    border-radius: 6px;
+  }
+}
+
+@layer components {
+  .site-container {
+    @apply mx-auto w-full max-w-site px-4 sm:px-6;
+  }
+  .eyebrow {
+    @apply text-xs font-semibold tracking-[0.08em] text-tg-deep;
+  }
+  .btn-primary {
+    @apply inline-flex items-center justify-center gap-2 rounded-full bg-ink px-6 py-3 text-sm font-semibold text-paper transition hover:bg-ink/85 active:scale-[0.98];
+  }
+  .btn-ghost {
+    @apply inline-flex items-center justify-center gap-2 rounded-full border border-ink/15 px-6 py-3 text-sm font-semibold text-ink transition hover:border-ink/40 active:scale-[0.98];
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    transition: none !important;
+  }
+}
+
+@keyframes robot-float {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-10px);
+  }
+}
+
+@keyframes robot-shadow {
+  0%,
+  100% {
+    transform: scaleX(1);
+    opacity: 1;
+  }
+  50% {
+    transform: scaleX(0.88);
+    opacity: 0.7;
+  }
+}

@@ -1,0 +1,69 @@
+# Local development infrastructure only (Postgres, Redis, S3-compatible storage).
+# Production compose (api/workers/web/admin/miniapp/Caddy) is added in Phase 17
+# — see docs/PHASES.md and ARCHITECTURE.md.
+#
+# Storage note: MinIO's official images are no longer pullable from Docker
+# Hub (repo access denied) and quay.io/minio is blocked by this environment's
+# egress policy, so local dev uses LocalStack's S3 emulator instead — it's
+# genuinely S3-API-compatible and MIT-licensed, and is intentionally used
+# dev/test-only here. Production must point S3_ENDPOINT at a real
+# S3-compatible provider (AWS S3, Cloudflare R2, Backblaze B2, DigitalOcean
+# Spaces, or a self-hosted MinIO pulled from a registry you have access to)
+# — never LocalStack.
+name: sqlm-dev
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-sqlm}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change-me-strong-password}
+      POSTGRES_DB: ${POSTGRES_DB:-sqlm}
+    ports:
+      - '${POSTGRES_PORT:-5432}:5432'
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER:-sqlm}']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - '${REDIS_PORT:-6379}:6379'
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  storage:
+    # Pinned: newer LocalStack tags require a paid auth token even for S3.
+    # 3.8.1 is the last fully free community build we could verify here.
+    image: localstack/localstack:3.8.1
+    restart: unless-stopped
+    environment:
+      SERVICES: s3
+      AWS_DEFAULT_REGION: ${S3_REGION:-us-east-1}
+      EAGER_SERVICE_LOADING: 1
+    ports:
+      - '9000:4566'
+    volumes:
+      - storage_data:/var/lib/localstack
+      - ./infra/localstack-init.sh:/etc/localstack/init/ready.d/init.sh:ro
+    healthcheck:
+      test: ['CMD', 'curl', '-f', 'http://localhost:4566/_localstack/health']
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+volumes:
+  pg_data:
+  redis_data:
+  storage_data:

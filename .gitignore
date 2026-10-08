@@ -1,0 +1,54 @@
+# dependencies
+node_modules/
+.pnpm-store/
+
+# build outputs
+dist/
+build/
+.next/
+out/
+*.tsbuildinfo
+
+# turbo
+.turbo/
+
+# env
+.env
+.env.local
+.env.*.local
+!.env.example
+
+# prisma
+packages/database/generated/
+
+# logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# testing
+coverage/
+
+# IDE
+.vscode/*
+!.vscode/extensions.json
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# docker volumes (local dev)
+infra/data/
+
+# misc
+*.pem
+.eslintcache
+
+# redis
+dump.rdb
+
+# Local object storage. The e2e suite runs with S3_ENDPOINT unset, so uploads
+# fall back to disk here and every test run leaves payment-proof images behind.
+storage-data/
+**/storage-data/

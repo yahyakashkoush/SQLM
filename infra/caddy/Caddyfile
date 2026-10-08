@@ -1,0 +1,70 @@
+# Reverse proxy + automatic TLS. Domains come from the environment so the
+# same file serves staging and production.
+#
+# Caddy load-balances across every container answering to a service name,
+# so `docker compose up --scale api=3` needs no change here.
+
+{
+	email {$ACME_EMAIL:admin@example.com}
+}
+
+# While a container restarts on deploy there is nothing listening for a few
+# seconds. Instead of answering 502 at once (Telegram logs that as a failed
+# webhook delivery), hold the request and retry the dial until it is back.
+(retry_upstream) {
+	lb_try_duration 30s
+	lb_try_interval 250ms
+}
+
+(security_headers) {
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		-Server
+	}
+}
+
+{$API_DOMAIN} {
+	import security_headers
+	# SSE connections stay open; the default flush behaviour would buffer
+	# them into uselessness.
+	@sse path /api/v1/realtime/*
+	reverse_proxy @sse api:4000 {
+		flush_interval -1
+		import retry_upstream
+	}
+	reverse_proxy api:4000 {
+		import retry_upstream
+	}
+}
+
+{$ADMIN_DOMAIN} {
+	import security_headers
+	# The dashboard is staff-only and must never be indexed.
+	header X-Robots-Tag "noindex, nofollow"
+	reverse_proxy admin:3100 {
+		import retry_upstream
+	}
+}
+
+{$MINIAPP_DOMAIN} {
+	import security_headers
+	# Telegram renders the Mini App inside its own WebView, so DENY would
+	# break it — allow framing by Telegram only.
+	header {
+		-X-Frame-Options
+		Content-Security-Policy "frame-ancestors https://web.telegram.org https://*.telegram.org"
+	}
+	reverse_proxy miniapp:3200 {
+		import retry_upstream
+	}
+}
+
+{$WEB_DOMAIN} {
+	import security_headers
+	reverse_proxy web:3000 {
+		import retry_upstream
+	}
+}
