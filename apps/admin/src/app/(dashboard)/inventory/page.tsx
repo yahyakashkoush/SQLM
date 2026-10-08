@@ -177,7 +177,7 @@ function ItemsPanel({ product, canWrite, canReveal }: { product: AdminProduct; c
     <div className="space-y-4">
       <Card>
         <CardContent className="space-y-3 p-4">
-          <div className="flex items-center justify-between">
+          <div className="flex items-center justify-between flex-wrap gap-2">
             <p className="font-medium" dir="auto">{product.name}</p>
             <Badge variant="secondary">{product.availableStock} available</Badge>
           </div>

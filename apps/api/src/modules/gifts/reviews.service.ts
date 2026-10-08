@@ -5,11 +5,15 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { RedisService } from '../redis/redis.service';
 import type { CreateProductReviewDto } from './dto/gifts.dto';
 
 @Injectable()
 export class ReviewsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly redis: RedisService,
+  ) {}
 
   /**
    * Submit a review for a product from a completed order.
@@ -80,9 +84,11 @@ export class ReviewsService {
   }
 
   /** Mark a review as helpful (increment counter). */
-  async markHelpful(reviewId: string) {
+  async markHelpful(reviewId: string, customerId: string) {
     const review = await this.prisma.productReview.findUnique({ where: { id: reviewId } });
     if (!review) throw new NotFoundException('Review not found');
+    // One vote per customer per review; a repeat is a no-op, not a +1.
+    if (!(await this.redis.claimOnce(`review-helpful:${reviewId}:${customerId}`, 365 * 24 * 3600))) return review;
     return this.prisma.productReview.update({
       where: { id: reviewId },
       data: { helpful: { increment: 1 } },

@@ -5,16 +5,24 @@ import Script from 'next/script';
 import { useAuthStore } from '@/store/auth-store';
 import { api, ApiError, setTelegramInitData } from '@/lib/api';
 
+export interface Restriction {
+  kind: 'BANNED' | 'SUSPENDED';
+  reason: string;
+  until: string | null;
+}
+
 interface TelegramContextValue {
   ready: boolean;
   inTelegram: boolean;
   authError: string | null;
+  restriction: Restriction | null;
 }
 
 const TelegramContext = createContext<TelegramContextValue>({
   ready: false,
   inTelegram: false,
   authError: null,
+  restriction: null,
 });
 
 export const useTelegram = () => useContext(TelegramContext);
@@ -31,6 +39,7 @@ export function TelegramProvider({ children }: { children: React.ReactNode }) {
   const [ready, setReady] = useState(false);
   const [inTelegram, setInTelegram] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
+  const [restriction, setRestriction] = useState<Restriction | null>(null);
   const setSession = useAuthStore((s) => s.setSession);
   const hasSession = useAuthStore((s) => Boolean(s.accessToken));
 
@@ -70,6 +79,16 @@ export function TelegramProvider({ children }: { children: React.ReactNode }) {
         setReady(true);
       })
       .catch((err: unknown) => {
+        if (err instanceof ApiError && (err.code === 'ACCOUNT_SUSPENDED' || err.code === 'ACCOUNT_BANNED')) {
+          setRestriction({
+            kind: err.code === 'ACCOUNT_BANNED' ? 'BANNED' : 'SUSPENDED',
+            reason: err.message,
+            until: err.until ?? null,
+          });
+          setAuthError('حسابك موقوف حالياً.');
+          setReady(true);
+          return;
+        }
         const suspended = err instanceof ApiError && /suspended|not active/i.test(err.message);
         setAuthError(
           suspended
@@ -83,7 +102,7 @@ export function TelegramProvider({ children }: { children: React.ReactNode }) {
   }, [scriptLoaded, hasSession, setSession]);
 
   return (
-    <TelegramContext.Provider value={{ ready, inTelegram, authError }}>
+    <TelegramContext.Provider value={{ ready, inTelegram, authError, restriction }}>
       <Script
         src="https://telegram.org/js/telegram-web-app.js"
         strategy="afterInteractive"

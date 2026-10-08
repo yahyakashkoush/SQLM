@@ -70,7 +70,7 @@ export default function BotPage() {
 
         <Card>
           <CardContent className="space-y-3 p-4 text-sm">
-            <div className="flex items-center justify-between">
+            <div className="flex items-center justify-between flex-wrap gap-2">
               <h2 className="font-semibold">Connection</h2>
               <Badge variant={status.ready && !status.webhook?.lastErrorMessage ? 'success' : 'destructive'}>
                 {status.ready ? 'connected' : 'not connected'}

@@ -42,7 +42,7 @@ export default function DeliveriesPage() {
                 onClick={() => setSelectedId(d.id)}
                 className={`cursor-pointer ${selected?.id === d.id ? 'border-primary' : 'hover:border-primary/40'}`}
               >
-                <CardContent className="flex items-center justify-between p-3">
+                <CardContent className="flex items-center justify-between p-3 flex-wrap gap-2">
                   <div className="text-sm">
                     <p className="font-medium" dir="auto">
                       {d.orderItem.productNameSnapshot} × {d.orderItem.quantity}
@@ -62,7 +62,7 @@ export default function DeliveriesPage() {
           {selected && (
             <Card>
               <CardContent className="space-y-3 p-4">
-                <div className="flex items-center justify-between">
+                <div className="flex items-center justify-between flex-wrap gap-2">
                   <p className="text-sm font-medium">Deliver order #{selected.order?.sequenceNumber}</p>
                   <Link href={`/orders/${selected.orderId}`} className="text-xs text-primary underline">
                     Open order

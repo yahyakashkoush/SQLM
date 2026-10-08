@@ -38,7 +38,7 @@ export default function SocialRewardsPage() {
                 onClick={() => setSelectedId(reward.id)}
                 className={`cursor-pointer ${selected?.id === reward.id ? 'border-primary' : 'hover:border-primary/40'}`}
               >
-                <CardContent className="flex items-center justify-between p-3 text-sm">
+                <CardContent className="flex items-center justify-between p-3 text-sm flex-wrap gap-2">
                   <div className="min-w-0">
                     <p className="font-medium truncate">{reward.product.name}</p>
                     <p className="text-xs text-muted-foreground truncate">

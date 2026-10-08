@@ -1,7 +1,8 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
+import { Plus, Star, Trash2 } from 'lucide-react';
 import { Button, Input } from '@sqlm/ui';
 import { api, ApiError, type AdminProduct } from '@/lib/api';
 import { Checkbox, Field, Section, Select, Textarea } from './form';
@@ -58,7 +59,29 @@ interface FormState {
   badge: string;
   socialPostUrl: string;
   socialPageUrl: string;
+  costPrice: string;
+  ratingScore: string;
+  reviewCount: string;
 }
+
+interface BundleRow {
+  id?: string;
+  label: string;
+  quantity: string;
+  price: string;
+  wholesaleOnly: boolean;
+  active: boolean;
+}
+
+const toBundleRows = (p: Partial<AdminProduct> | null): BundleRow[] =>
+  (p?.bundles ?? []).map((b) => ({
+    id: b.id,
+    label: b.label ?? '',
+    quantity: String(b.quantity),
+    price: String(b.price),
+    wholesaleOnly: b.wholesaleOnly,
+    active: b.active,
+  }));
 
 function toForm(p: Partial<AdminProduct> | null, defaultCurrency: string): FormState {
   return {
@@ -89,6 +112,9 @@ function toForm(p: Partial<AdminProduct> | null, defaultCurrency: string): FormS
     badge: p?.badge ?? '',
     socialPostUrl: p?.socialPostUrl ?? '',
     socialPageUrl: p?.socialPageUrl ?? '',
+    costPrice: p?.costPrice ?? '',
+    ratingScore: p?.ratingScore != null ? String(Number(p.ratingScore)) : '',
+    reviewCount: p?.reviewCount ? String(p.reviewCount) : '',
   };
 }
 
@@ -111,6 +137,24 @@ export function ProductForm({
   const set = <K extends keyof FormState>(key: K, value: FormState[K]) => setForm((f) => ({ ...f, [key]: value }));
 
   const { data: categories } = useQuery({ queryKey: ['categories'], queryFn: () => api.categories() });
+
+  // Bundles live on the product detail, not the list row the form may have
+  // been opened from; until they load, saving leaves them untouched.
+  const [bundles, setBundles] = useState<BundleRow[]>(() => toBundleRows(product));
+  const [bundlesReady, setBundlesReady] = useState(!isEdit || product?.bundles !== undefined);
+  const { data: detail } = useQuery({
+    queryKey: ['product', product?.id],
+    queryFn: () => api.product(product!.id!),
+    enabled: isEdit && product?.bundles === undefined,
+  });
+  useEffect(() => {
+    if (detail && !bundlesReady) {
+      setBundles(toBundleRows(detail));
+      setBundlesReady(true);
+    }
+  }, [detail, bundlesReady]);
+  const setBundle = (i: number, patch: Partial<BundleRow>) =>
+    setBundles((rows) => rows.map((row, j) => (j === i ? { ...row, ...patch } : row)));
   const { data: templates } = useQuery({ queryKey: ['delivery-templates'], queryFn: () => api.deliveryTemplates() });
 
   const save = useMutation({
@@ -145,7 +189,20 @@ export function ProductForm({
         badge: form.badge.trim() || null,
         socialPostUrl: form.socialPostUrl.trim() || null,
         socialPageUrl: form.socialPageUrl.trim() || null,
+        costPrice: form.costPrice.trim() ? Number(form.costPrice) : null,
+        ratingScore: form.ratingScore.trim() ? Number(form.ratingScore) : null,
+        reviewCount: form.reviewCount.trim() ? Number(form.reviewCount) : 0,
       };
+      if (bundlesReady) {
+        payload.bundles = bundles.map((b) => ({
+          ...(b.id ? { id: b.id } : {}),
+          label: b.label.trim() || null,
+          quantity: Number(b.quantity),
+          price: Number(b.price),
+          wholesaleOnly: b.wholesaleOnly,
+          active: b.active,
+        }));
+      }
       if (form.slug.trim()) payload.slug = form.slug.trim().toLowerCase();
       return (isEdit ? api.updateProduct(product!.id!, payload) : api.createProduct(payload)) as Promise<{
         notified?: number;
@@ -155,11 +212,20 @@ export function ProductForm({
     onError: (err) => setError(err instanceof ApiError ? err.message : 'Save failed'),
   });
 
+  const badBundle = bundles.find(
+    (b) => !(Number(b.quantity) >= 2) || !Number.isInteger(Number(b.quantity)) || !(Number(b.price) > 0),
+  );
+  const rating = form.ratingScore.trim() ? Number(form.ratingScore) : null;
   const validationError = !form.name.trim()
     ? 'Name is required'
     : form.price === '' || Number.isNaN(Number(form.price))
       ? 'Price is required'
-      : null;
+      : rating !== null && (Number.isNaN(rating) || rating < 0 || rating > 5)
+        ? 'Rating must be between 0 and 5'
+        : badBundle
+          ? 'Each bundle needs a quantity of 2 or more and a price'
+          : null;
+  const unitPrice = Number(form.price) || 0;
 
   const willAutoDeliver =
     form.inventoryMode === 'INDIVIDUAL' && form.deliveryType !== 'MANUAL' && form.deliveryType !== 'CUSTOM';
@@ -224,6 +290,135 @@ export function ProductForm({
           <Field label="Warranty" htmlFor="p-warranty" hint="e.g. ضمان كامل المدة">
             <Input id="p-warranty" dir="auto" value={form.warranty} onChange={(e) => set('warranty', e.target.value)} />
           </Field>
+          <Field label="Cost price (private)" htmlFor="p-cost" hint="For profit reports. Never shown to customers.">
+            <Input id="p-cost" type="number" min="0" step="0.01" value={form.costPrice} onChange={(e) => set('costPrice', e.target.value)} />
+          </Field>
+        </div>
+      </Section>
+
+      <Section
+        title="Bundles"
+        description="Sell several units together for less — e.g. 5 accounts for the price of 4. Wholesale bundles are only offered to approved wholesale members."
+      >
+        {!bundlesReady ? (
+          <p className="text-sm text-muted-foreground">Loading bundles…</p>
+        ) : (
+          <div className="space-y-3">
+            {bundles.length === 0 && <p className="text-sm text-muted-foreground">No bundles — sold one unit at a time.</p>}
+            {bundles.map((b, i) => {
+              const qty = Number(b.quantity);
+              const price = Number(b.price);
+              const saving = qty >= 2 && price > 0 && unitPrice > 0 ? 1 - price / (unitPrice * qty) : null;
+              return (
+                <div key={b.id ?? `new-${i}`} className="rounded-lg border p-3">
+                  <div className="grid gap-3 sm:grid-cols-[1fr,7rem,8rem]">
+                    <Field label="Label" htmlFor={`b-label-${i}`} hint="Shown to the customer.">
+                      <Input
+                        id={`b-label-${i}`}
+                        dir="auto"
+                        value={b.label}
+                        placeholder={`باقة ${b.quantity || 'N'}`}
+                        onChange={(e) => setBundle(i, { label: e.target.value })}
+                      />
+                    </Field>
+                    <Field label="Units" htmlFor={`b-qty-${i}`}>
+                      <Input
+                        id={`b-qty-${i}`}
+                        type="number"
+                        min="2"
+                        inputMode="numeric"
+                        value={b.quantity}
+                        onChange={(e) => setBundle(i, { quantity: e.target.value })}
+                      />
+                    </Field>
+                    <Field label={`Price (${form.currency})`} htmlFor={`b-price-${i}`} hint="For the whole bundle.">
+                      <Input
+                        id={`b-price-${i}`}
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        inputMode="decimal"
+                        value={b.price}
+                        onChange={(e) => setBundle(i, { price: e.target.value })}
+                      />
+                    </Field>
+                  </div>
+                  <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-2 text-sm">
+                    <Checkbox label="Wholesale members only" checked={b.wholesaleOnly} onChange={(v) => setBundle(i, { wholesaleOnly: v })} />
+                    <Checkbox label="Active" checked={b.active} onChange={(v) => setBundle(i, { active: v })} />
+                    {saving !== null && (
+                      <span className={`text-xs ${saving > 0 ? 'text-success' : 'text-destructive'}`}>
+                        {saving > 0
+                          ? `${Math.round(saving * 100)}% off ${qty} singles · ${(price / qty).toFixed(2)} each`
+                          : 'Costs more than buying singles'}
+                      </span>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => setBundles((rows) => rows.filter((_, j) => j !== i))}
+                      className="ml-auto inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs text-destructive hover:bg-destructive/10"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" /> Remove
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() =>
+                setBundles((rows) => [
+                  ...rows,
+                  { label: '', quantity: '5', price: '', wholesaleOnly: false, active: true },
+                ])
+              }
+            >
+              <Plus className="mr-1 h-4 w-4" /> Add bundle
+            </Button>
+          </div>
+        )}
+      </Section>
+
+      <Section title="Star rating" description="The stars and count shown on the product. Stars only — no written reviews are shown.">
+        <div className="grid gap-3 sm:grid-cols-2">
+          <Field label="Rating (0–5)" htmlFor="p-rating" hint="Leave empty to hide the stars.">
+            <Input
+              id="p-rating"
+              type="number"
+              min="0"
+              max="5"
+              step="0.1"
+              inputMode="decimal"
+              value={form.ratingScore}
+              onChange={(e) => set('ratingScore', e.target.value)}
+              placeholder="4.9"
+            />
+          </Field>
+          <Field label="Number of ratings" htmlFor="p-reviews">
+            <Input
+              id="p-reviews"
+              type="number"
+              min="0"
+              inputMode="numeric"
+              value={form.reviewCount}
+              onChange={(e) => set('reviewCount', e.target.value)}
+              placeholder="320"
+            />
+          </Field>
+          {rating !== null && !Number.isNaN(rating) && (
+            <div className="flex items-center gap-1 sm:col-span-2" aria-label={`Preview: ${rating} stars`}>
+              {Array.from({ length: 5 }).map((_, i) => (
+                <Star
+                  key={i}
+                  className={`h-5 w-5 ${i < Math.round(rating) ? 'fill-amber-400 text-amber-400' : 'text-muted-foreground/40'}`}
+                />
+              ))}
+              <span className="ml-1 text-sm font-medium">{rating.toFixed(1)}</span>
+              {form.reviewCount && <span className="text-sm text-muted-foreground">({form.reviewCount})</span>}
+            </div>
+          )}
         </div>
       </Section>
 
@@ -398,11 +593,11 @@ export function ProductForm({
 
       {error && <p className="text-sm text-destructive">{error}</p>}
       {!error && validationError && <p className="text-sm text-muted-foreground">{validationError}</p>}
-      <div className="flex gap-2">
-        <Button disabled={Boolean(validationError) || save.isPending} onClick={() => save.mutate()}>
+      <div className="sticky bottom-0 -mx-1 flex gap-2 border-t bg-background/95 px-1 py-3 backdrop-blur sm:static sm:border-0 sm:bg-transparent sm:p-0">
+        <Button className="flex-1 sm:flex-none" disabled={Boolean(validationError) || save.isPending} onClick={() => save.mutate()}>
           {save.isPending ? 'Saving…' : isEdit ? 'Save changes' : 'Create product'}
         </Button>
-        <Button variant="outline" onClick={onCancel}>
+        <Button className="flex-1 sm:flex-none" variant="outline" onClick={onCancel}>
           Cancel
         </Button>
       </div>

@@ -24,6 +24,7 @@ export function ProofReview({
   const queryClient = useQueryClient();
   const can = useAuthStore((s) => s.can);
   const [reason, setReason] = useState('');
+  const [honest, setHonest] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const { data: view, isLoading, isError } = useQuery({
@@ -48,13 +49,14 @@ export function ProofReview({
 
   const approve = useMutation({ mutationFn: () => api.approveProof(proofId), onSuccess: done, onError: fail });
   const reject = useMutation({
-    mutationFn: (cancelOrder: boolean) => api.rejectProof(proofId, reason.trim(), cancelOrder),
+    mutationFn: (cancelOrder: boolean) =>
+      api.rejectProof(proofId, reason.trim(), cancelOrder, honest ? false : undefined),
     onSuccess: done,
     onError: fail,
   });
   const rejectAsFake = useMutation({
     mutationFn: async () => {
-      await api.rejectProof(proofId, FAKE_REASON, true);
+      await api.rejectProof(proofId, FAKE_REASON, true, false);
       if (detail?.customerId) await api.banCustomer(detail.customerId, FAKE_REASON);
     },
     onSuccess: done,
@@ -63,6 +65,14 @@ export function ProofReview({
 
   return (
     <div className="space-y-3">
+      {detail?.senderReference && (
+        <p className="rounded-md bg-muted px-3 py-2 text-sm">
+          Customer says they paid from:{' '}
+          <span className="font-mono font-semibold" dir="ltr">
+            {detail.senderReference}
+          </span>
+        </p>
+      )}
       {flags.length > 0 ? (
         <ul className="space-y-1 rounded-md border border-destructive/40 bg-destructive/5 p-3 text-sm" dir="rtl">
           {flags.map((f) => (
@@ -109,6 +119,18 @@ export function ProofReview({
             value={reason}
             onChange={(e) => setReason(e.target.value)}
           />
+          <label className="flex items-start gap-2 text-xs text-muted-foreground">
+            <input
+              type="checkbox"
+              className="mt-0.5"
+              checked={honest}
+              onChange={(e) => setHonest(e.target.checked)}
+            />
+            <span>
+              Honest mistake — don&apos;t count this rejection against the customer. (By default a second
+              suspicious rejection in a day, or any rejection that cancels the order, suspends them.)
+            </span>
+          </label>
           <div className="flex flex-wrap gap-2">
             <Button size="sm" disabled={approve.isPending || reject.isPending} onClick={() => approve.mutate()}>
               ✓ Approve payment

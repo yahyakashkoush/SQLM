@@ -102,3 +102,17 @@ export function useMyRewards() {
   const hasSession = useAuthStore((s) => Boolean(s.accessToken));
   return useQuery({ queryKey: ['my-rewards'], queryFn: api.myRewards, enabled: hasSession });
 }
+
+export function useProfile() {
+  const hasSession = useAuthStore((s) => Boolean(s.accessToken));
+  return useQuery({ queryKey: ['profile'], queryFn: api.profile, enabled: hasSession, staleTime: 60_000 });
+}
+
+/** Wholesale-only bundles of a product — empty unless this customer is an approved member. */
+export function useWholesaleBundles(productId: string | undefined, isMember: boolean) {
+  return useQuery({
+    queryKey: ['wholesale-bundles', productId],
+    queryFn: () => api.wholesaleBundles(productId!),
+    enabled: Boolean(productId) && isMember,
+  });
+}

@@ -1,4 +1,18 @@
-import { IsString, IsUrl, IsOptional, IsArray, ArrayMinSize, IsInt, Min, Max, IsNotEmpty } from 'class-validator';
+import {
+  ArrayMaxSize,
+  ArrayMinSize,
+  IsArray,
+  IsIn,
+  IsInt,
+  IsNotEmpty,
+  IsOptional,
+  IsString,
+  IsUrl,
+  IsUUID,
+  Max,
+  MaxLength,
+  Min,
+} from 'class-validator';
 
 export class ClaimInstantGiftDto {
   @IsString()
@@ -7,25 +21,28 @@ export class ClaimInstantGiftDto {
 }
 
 export class SubmitSocialRewardDto {
-  @IsString()
-  @IsNotEmpty()
+  @IsUUID()
   productId!: string;
 
-  @IsString()
-  @IsNotEmpty()
+  @IsIn(['FACEBOOK_COMMENT', 'FACEBOOK_RATING'])
   claimType!: 'FACEBOOK_COMMENT' | 'FACEBOOK_RATING';
 
   @IsOptional()
-  @IsUrl()
+  @IsUrl({ protocols: ['https'], require_protocol: true })
+  @MaxLength(500)
   facebookPostUrl?: string;
 
   @IsOptional()
-  @IsUrl()
+  @IsUrl({ protocols: ['https'], require_protocol: true })
+  @MaxLength(500)
   facebookProfileUrl?: string;
 
+  /** URLs returned by POST /storage/upload — checked against our own storage in the service. */
   @IsArray()
   @ArrayMinSize(1)
+  @ArrayMaxSize(5)
   @IsString({ each: true })
+  @MaxLength(500, { each: true })
   proofScreenshots!: string[];
 }
 

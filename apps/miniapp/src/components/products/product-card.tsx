@@ -3,6 +3,7 @@ import { Star } from 'lucide-react';
 import { Badge, Card, CardContent } from '@sqlm/ui';
 import { formatMoney } from '@/lib/format';
 import type { Product } from '@/types/api';
+import { StockLabel } from './stock-label';
 
 export function ProductCard({ product }: { product: Product }) {
   const outOfStock = product.availableStock <= 0;
@@ -53,7 +54,7 @@ export function ProductCard({ product }: { product: Product }) {
           {product.shortDescription && (
             <p className="line-clamp-1 text-xs text-muted-foreground">{product.shortDescription}</p>
           )}
-          {product.ratingScore && (
+          {Number(product.ratingScore) > 0 && (
             <p className="flex items-center gap-1 text-[11px] text-amber-500">
               <Star className="h-3 w-3 fill-amber-400" />
               {Number(product.ratingScore).toFixed(1)}
@@ -61,6 +62,10 @@ export function ProductCard({ product }: { product: Product }) {
             </p>
           )}
           {product.duration && <p className="text-[11px] text-muted-foreground">⏳ {product.duration}</p>}
+          <p className="flex items-center justify-between gap-1 text-[11px]">
+            <StockLabel stock={product.availableStock} />
+            {(product.bundles?.length ?? 0) > 0 && <span className="text-primary">📦 باقات بخصم</span>}
+          </p>
           <div className="flex items-baseline gap-2 pt-1">
             <span className="text-sm font-semibold">
               {formatMoney(product.price, product.currency)}

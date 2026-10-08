@@ -39,7 +39,7 @@ export default function PaymentProofsPage() {
                 onClick={() => setSelectedId(proof.id)}
                 className={`cursor-pointer ${selected?.id === proof.id ? 'border-primary' : 'hover:border-primary/40'}`}
               >
-                <CardContent className="flex items-center justify-between p-3 text-sm">
+                <CardContent className="flex items-center justify-between p-3 text-sm flex-wrap gap-2">
                   <div>
                     <p className="font-medium">
                       Order #{proof.order?.sequenceNumber} · {proof.order?.total} {proof.order?.currency}
@@ -60,7 +60,7 @@ export default function PaymentProofsPage() {
           {selected && (
             <Card>
               <CardContent className="space-y-3 p-4">
-                <div className="flex items-center justify-between">
+                <div className="flex items-center justify-between flex-wrap gap-2">
                   <p className="text-sm font-medium">
                     Order #{selected.order?.sequenceNumber} — {selected.order?.total} {selected.order?.currency}
                   </p>

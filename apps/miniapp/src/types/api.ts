@@ -36,6 +36,34 @@ export interface Product {
   badge: string | null;
   ratingScore: string | null;
   reviewCount: number;
+  /** Retail bundles; wholesale ones come from /wholesale for members only. */
+  bundles?: ProductBundle[];
+}
+
+export interface ProductBundle {
+  id: string;
+  label: string | null;
+  quantity: number;
+  /** Price of the whole bundle. */
+  price: string;
+  wholesaleOnly?: boolean;
+}
+
+export interface AccountProfile {
+  fullName: string | null;
+  contactPhone: string | null;
+  needsContact: boolean;
+  wholesale: boolean;
+  firstName: string | null;
+  memberSince: string;
+}
+
+export interface WholesaleStatus {
+  member: boolean;
+  memberSince: string | null;
+  accepting: boolean;
+  terms: string;
+  application: { id: string; status: 'PENDING' | 'APPROVED' | 'REJECTED'; staffNote: string | null; createdAt: string } | null;
 }
 
 export interface GiftProduct {
@@ -104,6 +132,8 @@ export interface OrderItem {
   productNameSnapshot: string;
   unitPrice: string;
   quantity: number;
+  lineTotal?: string | null;
+  bundleLabel?: string | null;
   product?: { slug: string; images: string[] };
 }
 
@@ -150,6 +180,7 @@ export interface StoreInfo {
   /** Shown on the payment step: what happens to a fake receipt. */
   proofWarning?: string;
   rules?: string;
+  terms?: string;
   botUsername?: string | null;
   /** Display-only estimate rate; orders carry their own frozen rate. */
   egpPerUsd?: number;

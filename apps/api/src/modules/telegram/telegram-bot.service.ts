@@ -448,6 +448,9 @@ export class TelegramBotService implements OnModuleInit {
         await this.handleMenu(ctx, 'LEGACY');
         return;
       }
+      // From a product on the website: t.me/<bot>?start=p_<slug>.
+      const productSlug = /^p_([a-z0-9-]{1,62})$/.exec(payload)?.[1];
+      if (productSlug && (await this.replyWithProduct(ctx, productSlug))) return;
 
       const customer = await this.upsertCustomer(ctx);
       const text = renderTemplate(await this.settings.getString('bot.welcomeMessage'), {
@@ -715,6 +718,28 @@ export class TelegramBotService implements OnModuleInit {
         await this.offerLegacyClaim(ctx);
         return;
     }
+  }
+
+  /** True when the product exists and was shown; false falls back to the normal welcome. */
+  private async replyWithProduct(ctx: Context, slug: string): Promise<boolean> {
+    const product = await this.prisma.product.findFirst({
+      where: { slug, status: 'ACTIVE', visibility: 'VISIBLE' },
+      select: { name: true, slug: true, shortDescription: true, images: true, duration: true },
+    });
+    if (!product) return false;
+    await this.upsertCustomer(ctx);
+    const text = [`🛍️ ${product.name}`, product.duration ? `⏳ ${product.duration}` : '', product.shortDescription ?? '']
+      .filter(Boolean)
+      .join('\n');
+    const reply_markup = buildWebAppButton('شوف السعر واطلب 👈', `${this.miniAppUrl}/products/${product.slug}`);
+    const image = product.images[0];
+    if (image && /^https:\/\//.test(image)) {
+      await ctx.replyWithPhoto(image, { caption: text, reply_markup }).catch(() => ctx.reply(text, { reply_markup }));
+    } else {
+      await ctx.reply(text, { reply_markup });
+    }
+    await ctx.reply('القائمة تحت 👇', { reply_markup: buildMainMenuKeyboard() });
+    return true;
   }
 
   // ---------------------------------------------------------------------------

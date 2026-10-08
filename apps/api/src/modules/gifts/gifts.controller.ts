@@ -59,7 +59,7 @@ export class GiftsController {
   /** Mark a review as helpful. */
   @Post('reviews/:reviewId/helpful')
   @UseGuards(JwtCustomerAuthGuard)
-  markHelpful(@Param('reviewId') reviewId: string) {
-    return this.reviews.markHelpful(reviewId);
+  markHelpful(@Param('reviewId') reviewId: string, @CurrentCustomer() customer: AuthenticatedCustomer) {
+    return this.reviews.markHelpful(reviewId, customer.id);
   }
 }

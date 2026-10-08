@@ -11,6 +11,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { OrdersService, type OrderActor } from '../orders/orders.service';
 import { DeliveryDispatcher } from '../delivery/delivery-dispatcher.service';
 import { NotificationDispatcher } from '../notifications/notification-dispatcher.service';
+import { PUBLIC_PREFIX, StorageService } from '../storage/storage.service';
 import type { SubmitSocialRewardDto } from './dto/gifts.dto';
 
 @Injectable()
@@ -22,6 +23,7 @@ export class GiftsService {
     private readonly orders: OrdersService,
     private readonly delivery: DeliveryDispatcher,
     private readonly notifications: NotificationDispatcher,
+    private readonly storage: StorageService,
   ) {}
 
   /**
@@ -161,6 +163,12 @@ export class GiftsService {
     }
     if (product.giftType !== 'SOCIAL_REWARD') {
       throw new BadRequestException('Product is not a social reward gift');
+    }
+    // Only screenshots uploaded through our own endpoint: an arbitrary URL
+    // would be loaded by every staff member who opens the claim.
+    const ownPrefix = this.storage.publicUrl(`${PUBLIC_PREFIX}screenshots/`);
+    if (dto.proofScreenshots.some((url) => !url.startsWith(ownPrefix) || url.includes('..'))) {
+      throw new BadRequestException('ارفع صور الإثبات من التطبيق نفسه.');
     }
 
     // One pending/approved claim per customer per product per type

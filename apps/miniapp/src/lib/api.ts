@@ -1,5 +1,6 @@
 import { useAuthStore } from '@/store/auth-store';
 import type {
+  AccountProfile,
   Category,
   CustomerDelivery,
   CryptoPayment,
@@ -15,7 +16,15 @@ import type {
   StoreInfo,
   Ticket,
   TicketThread,
+  WholesaleStatus,
+  ProductBundle,
 } from '@/types/api';
+
+export interface CheckoutLine {
+  productId: string;
+  quantity: number;
+  bundleId?: string;
+}
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000';
 
@@ -29,6 +38,11 @@ export class ApiError extends Error {
     super(message);
     this.name = 'ApiError';
   }
+
+  /** ACCOUNT_SUSPENDED: when it ends. */
+  until?: string;
+  /** CONTACT_REQUIRED: which fields. */
+  missing?: Record<string, boolean>;
 }
 
 /**
@@ -97,9 +111,14 @@ async function request<T>(
     const body = (await res.json().catch(() => ({ message: res.statusText }))) as {
       message?: string | string[];
       code?: string;
+      until?: string;
+      missing?: Record<string, boolean>;
     };
     const message = Array.isArray(body.message) ? body.message.join('، ') : body.message;
-    throw new ApiError(res.status, message ?? 'حصل خطأ، حاول مرة أخرى', body.code);
+    const error = new ApiError(res.status, message ?? 'حصل خطأ، حاول مرة أخرى', body.code);
+    error.until = body.until;
+    error.missing = body.missing;
+    throw error;
   }
   if (res.status === 204) return undefined as T;
   return res.json() as Promise<T>;
@@ -128,7 +147,9 @@ export const api = {
   listPaymentMethods: () => request<PaymentMethod[]>('/payment-methods'),
 
   checkout: (payload: {
-    items: Array<{ productId: string; quantity: number }>;
+    items: CheckoutLine[];
+    fullName?: string;
+    contactPhone?: string;
     paymentMethodId: string;
     idempotencyKey: string;
     couponCode?: string;
@@ -140,10 +161,23 @@ export const api = {
     request<Order>(`/orders/${id}/cancel`, { method: 'POST', body: JSON.stringify({ reason }) }, true),
 
   /** Full server-side price: member discount, coupon, and per-method transfer amounts. */
-  quoteOrder: (items: Array<{ productId: string; quantity: number }>, couponCode?: string) =>
+  quoteOrder: (items: CheckoutLine[], couponCode?: string) =>
     request<OrderQuote>('/orders/quote', { method: 'POST', body: JSON.stringify({ items, couponCode }) }, true),
 
   perks: () => request<CustomerPerks>('/me/perks', {}, true),
+  profile: () => request<AccountProfile>('/me/profile', {}, true),
+
+  wholesaleStatus: () => request<WholesaleStatus>('/wholesale', {}, true),
+  applyWholesale: (payload: {
+    businessName: string;
+    contactPhone: string;
+    monthlyVolume?: string;
+    notes?: string;
+    acceptTerms: boolean;
+  }) => request('/wholesale/apply', { method: 'POST', body: JSON.stringify(payload) }, true),
+  wholesaleCatalog: () => request<unknown[]>('/wholesale/catalog', {}, true),
+  wholesaleBundles: (productId: string) =>
+    request<ProductBundle[]>(`/wholesale/products/${productId}/bundles`, {}, true),
 
   listOrders: () => request<PaginatedResult<Order>>('/orders', {}, true),
   getOrder: (id: string) => request<Order>(`/orders/${id}`, {}, true),
@@ -181,8 +215,9 @@ export const api = {
     }, true),
   myRewards: () => request<SocialRewardClaim[]>('/store/gifts/social-rewards/mine', {}, true),
 
-  uploadPaymentProof: (orderId: string, file: File) => {
+  uploadPaymentProof: (orderId: string, file: File, senderReference?: string) => {
     const form = new FormData();
+    if (senderReference?.trim()) form.append('senderReference', senderReference.trim());
     form.append('file', file);
     return request<{ id: string; status: string }>(
       `/orders/${orderId}/payment-proof`,

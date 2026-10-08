@@ -97,7 +97,7 @@ export default function OrderDetailPage({ params }: { params: Promise<{ id: stri
         title={`Order #${order.sequenceNumber}`}
         description={`Placed ${new Date(order.createdAt).toLocaleString()}`}
         action={
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
             <Badge variant={statusVariant(order.status)} className="text-sm">
               {order.status.replace(/_/g, ' ').toLowerCase()} · {ORDER_STATUS_LABELS_AR[order.status as OrderStatus]}
             </Badge>
@@ -129,11 +129,16 @@ export default function OrderDetailPage({ params }: { params: Promise<{ id: stri
                   ) : (
                     <div className="h-9 w-9 rounded bg-muted" />
                   )}
-                  <span className="flex-1" dir="auto">
+                  <span className="min-w-0 flex-1" dir="auto">
                     {item.productNameSnapshot} × {item.quantity}
+                    {item.bundleLabel && (
+                      <Badge variant="secondary" className="ml-2">
+                        {item.bundleLabel}
+                      </Badge>
+                    )}
                   </span>
-                  <span>
-                    {(Number(item.unitPrice) * item.quantity).toFixed(2)} {order.currency}
+                  <span className="shrink-0 tabular-nums">
+                    {Number(item.lineTotal ?? Number(item.unitPrice) * item.quantity).toFixed(2)} {order.currency}
                   </span>
                 </div>
               ))}
@@ -215,6 +220,16 @@ export default function OrderDetailPage({ params }: { params: Promise<{ id: stri
                   @{order.customer.telegramUsername}
                 </a>
               )}
+              {(order.customer.fullName || order.customer.contactPhone) && (
+                <p className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
+                  {order.customer.fullName && <span dir="auto">{order.customer.fullName}</span>}
+                  {order.customer.contactPhone && (
+                    <a href={`tel:${order.customer.contactPhone}`} className="text-primary underline" dir="ltr">
+                      {order.customer.contactPhone}
+                    </a>
+                  )}
+                </p>
+              )}
               <p className="text-xs text-muted-foreground">Telegram ID: {order.customer.telegramId}</p>
               <Link href={`/customers/${order.customer.id}`} className="text-xs text-primary underline">
                 Customer history →
@@ -246,7 +261,7 @@ export default function OrderDetailPage({ params }: { params: Promise<{ id: stri
               ) : (
                 order.paymentProofs.map((proof) => (
                   <div key={proof.id} className="space-y-2 border-t pt-3">
-                    <div className="flex items-center justify-between text-xs">
+                    <div className="flex items-center justify-between text-xs flex-wrap gap-2">
                       <span>Uploaded {new Date(proof.uploadedAt).toLocaleString()}</span>
                       <Badge
                         variant={
@@ -280,7 +295,7 @@ export default function OrderDetailPage({ params }: { params: Promise<{ id: stri
         <div className="space-y-6">
           <Card>
             <CardContent className="space-y-3 p-4">
-              <div className="flex items-center justify-between">
+              <div className="flex items-center justify-between flex-wrap gap-2">
                 <p className="text-sm font-medium">Delivery</p>
                 {can('delivery.fulfill') && awaitingDelivery && (
                   <Button size="sm" variant="outline" disabled={startDelivery.isPending} onClick={() => startDelivery.mutate()}>
@@ -387,7 +402,7 @@ function DeliveryRow({ delivery, onChanged }: { delivery: PendingDelivery; onCha
 
   return (
     <div className="space-y-2 border-t pt-3 first:border-t-0 first:pt-0">
-      <div className="flex items-center justify-between gap-2 text-sm">
+      <div className="flex items-center justify-between gap-2 text-sm flex-wrap">
         <span dir="auto" className="font-medium">
           {delivery.orderItem.productNameSnapshot} × {delivery.orderItem.quantity}
         </span>

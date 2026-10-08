@@ -10,6 +10,22 @@ import { useAuthStore } from '@/store/auth-store';
 
 const GROUPS: Array<{ key: SettingDefinitionRow['group']; title: string; description: string }> = [
   { key: 'store', title: 'Store', description: 'Basic store identity shown to customers.' },
+  {
+    key: 'site',
+    title: 'Website & terms',
+    description: 'The public website (subsc.tech) and the Terms & Conditions shown on the site, in the Mini App and by /terms in the bot.',
+  },
+  {
+    key: 'wholesale',
+    title: 'Wholesale',
+    description: 'Wholesale membership applications and the terms an applicant must accept.',
+  },
+  {
+    key: 'security',
+    title: 'Security & abuse',
+    description:
+      'The strike ladder: a reused receipt, repeated rejected receipts, too many receipts on one order or too many unpaid orders each count as a strike. Strikes inside the window suspend, suspend longer, then ban. Banned and suspended customers can appeal from the bot.',
+  },
   { key: 'pricing', title: 'Pricing & currency', description: 'Prices are in USD; EGP payment methods show the converted amount.' },
   {
     key: 'customers',
@@ -99,17 +115,29 @@ export default function SettingsPage() {
 
   return (
     <>
-      <PageHeader title="Settings" description="Store details and every customer-facing message. Changes apply within seconds." />
+      <PageHeader title="Settings & content" description="Store details, website content, terms and every customer-facing message. Changes apply within seconds." />
       {error && <p className="mb-4 text-sm text-destructive">{error}</p>}
+
+      <nav className="-mx-4 mb-4 flex gap-2 overflow-x-auto px-4 pb-1 md:mx-0 md:flex-wrap md:px-0">
+        {GROUPS.map((g) => (
+          <a
+            key={g.key}
+            href={`#settings-${g.key}`}
+            className="whitespace-nowrap rounded-full border px-3 py-1 text-xs hover:bg-accent"
+          >
+            {g.title}
+          </a>
+        ))}
+      </nav>
 
       <div className="space-y-6">
         {GROUPS.map((group) => {
           const rows = data.settings.filter((s) => s.group === group.key);
           const dirty = rows.some((s) => s.key in drafts);
           return (
-            <Card key={group.key}>
+            <Card key={group.key} id={`settings-${group.key}`} className="scroll-mt-20">
               <CardContent className="space-y-4 p-4">
-                <div className="flex items-start justify-between gap-4">
+                <div className="flex items-start justify-between gap-4 flex-wrap">
                   <div>
                     <h2 className="text-sm font-semibold">{group.title}</h2>
                     <p className="text-xs text-muted-foreground">{group.description}</p>
@@ -140,9 +168,9 @@ export default function SettingsPage() {
             <CardContent className="space-y-2 p-4">
               <h2 className="text-sm font-semibold">Other stored values</h2>
               {data.custom.map((c) => (
-                <div key={c.key} className="flex gap-3 text-xs">
-                  <code className="w-56 shrink-0">{c.key}</code>
-                  <code className="text-muted-foreground">{JSON.stringify(c.value)}</code>
+                <div key={c.key} className="flex flex-col gap-1 text-xs sm:flex-row sm:gap-3">
+                  <code className="shrink-0 sm:w-56">{c.key}</code>
+                  <code className="break-all text-muted-foreground">{JSON.stringify(c.value)}</code>
                 </div>
               ))}
             </CardContent>

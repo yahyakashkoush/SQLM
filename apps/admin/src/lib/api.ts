@@ -168,8 +168,8 @@ export const api = {
   paymentProof: (id: string) => get<PaymentProof>(`/admin/payment-proofs/${id}`),
   proofViewUrl: (id: string) => get<{ url: string }>(`/admin/payment-proofs/${id}/view-url`),
   approveProof: (id: string) => post(`/admin/payment-proofs/${id}/approve`),
-  rejectProof: (id: string, reason: string, cancelOrder: boolean) =>
-    post(`/admin/payment-proofs/${id}/reject`, { reason, cancelOrder }),
+  rejectProof: (id: string, reason: string, cancelOrder: boolean, strike?: boolean) =>
+    post(`/admin/payment-proofs/${id}/reject`, { reason, cancelOrder, strike }),
 
   pendingDeliveries: () => get<PendingDelivery[]>('/admin/deliveries/pending'),
   orderDeliveries: (orderId: string) => get<PendingDelivery[]>(`/admin/deliveries/order/${orderId}`),
@@ -198,6 +198,21 @@ export const api = {
   banCustomer: (id: string, reason: string) =>
     post<{ customerId: string; cancelledOrders: number }>(`/admin/customers/${id}/ban`, { reason }),
   unbanCustomer: (id: string) => post(`/admin/customers/${id}/unban`),
+  messageCustomer: (id: string, message: string, withStoreButton: boolean) =>
+    post<{ ok: true }>(`/admin/customers/${id}/message`, { message, withStoreButton }),
+  suspendCustomer: (id: string, hours: number, reason: string) =>
+    post<{ suspendedUntil: string }>(`/admin/customers/${id}/suspend`, { hours, reason }),
+  liftSuspension: (id: string) => post(`/admin/customers/${id}/lift-suspension`),
+  revokeWholesale: (id: string) => post(`/admin/wholesale/customers/${id}/revoke`),
+
+  appeals: (status?: string) => get<Appeal[]>(`/admin/appeals${status ? `?status=${status}` : ''}`),
+  reviewAppeal: (id: string, accept: boolean, response?: string) =>
+    post(`/admin/appeals/${id}/review`, { accept, response }),
+
+  wholesaleApplications: (status?: string) =>
+    get<WholesaleApplication[]>(`/admin/wholesale${status ? `?status=${status}` : ''}`),
+  reviewWholesale: (id: string, approve: boolean, note?: string) =>
+    post(`/admin/wholesale/${id}/review`, { approve, note }),
 
   legacyCustomers: (search = '') =>
     get<LegacyCustomerList>(`/admin/legacy-customers${search ? `?search=${encodeURIComponent(search)}` : ''}`),
@@ -270,8 +285,64 @@ export interface AdminProduct {
   badge: string | null;
   socialPostUrl: string | null;
   socialPageUrl: string | null;
+  ratingScore: string | null;
+  reviewCount: number;
+  costPrice: string | null;
+  bundles?: ProductBundle[];
   category?: { id: string; name: string } | null;
   deliveryTemplate?: { id: string; name: string } | null;
+}
+
+export interface ProductBundle {
+  id?: string;
+  label: string | null;
+  quantity: number;
+  price: string | number;
+  wholesaleOnly: boolean;
+  active: boolean;
+}
+
+export interface Appeal {
+  id: string;
+  message: string;
+  status: 'PENDING' | 'ACCEPTED' | 'REJECTED';
+  response: string | null;
+  createdAt: string;
+  reviewedAt: string | null;
+  reviewedBy: { name: string } | null;
+  customer: {
+    id: string;
+    firstName: string | null;
+    lastName: string | null;
+    telegramUsername: string | null;
+    status: string;
+    banReason: string | null;
+    suspendedUntil: string | null;
+    suspendReason: string | null;
+  };
+}
+
+export interface WholesaleApplication {
+  id: string;
+  businessName: string;
+  contactPhone: string;
+  monthlyVolume: string | null;
+  notes: string | null;
+  status: 'PENDING' | 'APPROVED' | 'REJECTED';
+  staffNote: string | null;
+  createdAt: string;
+  reviewedAt: string | null;
+  reviewedBy: { name: string } | null;
+  customer: { id: string; firstName: string | null; lastName: string | null; telegramUsername: string | null; wholesaleAt: string | null };
+}
+
+export interface CustomerStrike {
+  id: string;
+  source: string;
+  reason: string;
+  action: string;
+  suspendedUntil: string | null;
+  createdAt: string;
 }
 
 export interface AdminCategory {
@@ -361,6 +432,8 @@ export interface AdminOrderDetail extends Omit<AdminOrder, 'customer' | 'payment
     productNameSnapshot: string;
     quantity: number;
     unitPrice: string;
+    lineTotal: string | null;
+    bundleLabel: string | null;
     product: { id: string; slug: string; images: string[] };
   }>;
   customer: {
@@ -371,11 +444,14 @@ export interface AdminOrderDetail extends Omit<AdminOrder, 'customer' | 'payment
     telegramUsername: string | null;
     status: string;
     verifiedAt: string | null;
+    fullName: string | null;
+    contactPhone: string | null;
   };
   paymentMethod: PaymentMethod | null;
   paymentProofs: Array<{
     id: string;
     status: string;
+    senderReference: string | null;
     mimeType: string;
     uploadedAt: string;
     rejectionReason: string | null;
@@ -481,6 +557,7 @@ export interface PaymentProof {
   fileSize: number;
   uploadedAt: string;
   rejectionReason: string | null;
+  senderReference: string | null;
   order?: { sequenceNumber: number; total: string; currency: string; status: string };
   customer?: { firstName: string | null; telegramUsername: string | null };
   risk?: ProofRisk;
@@ -584,6 +661,14 @@ export interface AdminCustomerDetail extends Omit<AdminCustomer, '_count'> {
   phone: string | null;
   bannedAt: string | null;
   banReason: string | null;
+  fullName: string | null;
+  contactPhone: string | null;
+  wholesaleAt: string | null;
+  suspendedUntil: string | null;
+  suspendReason: string | null;
+  strikes: CustomerStrike[];
+  appeals: Array<{ id: string; message: string; status: string; response: string | null; createdAt: string }>;
+  wholesaleApplications: Array<{ id: string; businessName: string; status: string; createdAt: string }>;
   legacyEntry: { id: string; phone: string; name: string | null; discountPercent: number | null; claimedAt: string | null } | null;
   rejectedProofs: number;
   orders: Array<{

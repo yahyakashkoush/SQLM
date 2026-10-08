@@ -2,11 +2,13 @@
 
 import { use, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Clock, ShieldCheck, ShoppingCart, Star, Zap } from 'lucide-react';
+import { Check, Clock, Package, ShieldCheck, ShoppingCart, Star, Store, Zap } from 'lucide-react';
 import { Badge, Button, Separator, Skeleton } from '@sqlm/ui';
-import { useProduct } from '@/lib/queries';
+import { useProduct, useProfile, useWholesaleBundles } from '@/lib/queries';
 import { useCartStore } from '@/store/cart-store';
 import { formatMoney } from '@/lib/format';
+import { StockLabel } from '@/components/products/stock-label';
+import type { ProductBundle } from '@/types/api';
 
 export default function ProductDetailPage({ params }: { params: Promise<{ slug: string }> }) {
   const { slug } = use(params);
@@ -16,6 +18,10 @@ export default function ProductDetailPage({ params }: { params: Promise<{ slug: 
   const [quantity, setQuantity] = useState(1);
   const [imageIndex, setImageIndex] = useState(0);
   const [feedback, setFeedback] = useState<{ ok: boolean; text: string } | null>(null);
+  /** null = one unit at a time. */
+  const [bundleId, setBundleId] = useState<string | null>(null);
+  const { data: profile } = useProfile();
+  const { data: wholesaleBundles } = useWholesaleBundles(product?.id, Boolean(profile?.wholesale));
 
   if (isLoading) {
     return (
@@ -38,14 +44,22 @@ export default function ProductDetailPage({ params }: { params: Promise<{ slug: 
     );
   }
 
+  const bundles: ProductBundle[] = [
+    ...(product.bundles ?? []),
+    ...(wholesaleBundles ?? []).map((b) => ({ ...b, wholesaleOnly: true })),
+  ];
+  const bundle = bundles.find((b) => b.id === bundleId) ?? null;
+  const unitsPer = bundle?.quantity ?? 1;
   const outOfStock = product.availableStock <= 0;
-  const maxQuantity = Math.max(1, Math.min(product.availableStock, 50));
+  const maxQuantity = Math.max(1, Math.min(Math.floor(product.availableStock / unitsPer), 50));
+  const unitPrice = Number(product.price);
+  const linePrice = bundle ? Number(bundle.price) : unitPrice;
   const autoDelivery =
     product.inventoryMode === 'INDIVIDUAL' && !['MANUAL', 'CUSTOM'].includes(product.deliveryType);
   const hasDiscount = product.compareAtPrice && Number(product.compareAtPrice) > Number(product.price);
 
   const handleAdd = (goToCart: boolean) => {
-    const result = addItem(product, quantity);
+    const result = addItem(product, quantity, bundle ?? undefined);
     if (result.ok && goToCart) {
       router.push('/cart');
       return;
@@ -88,12 +102,19 @@ export default function ProductDetailPage({ params }: { params: Promise<{ slug: 
         <div className="flex flex-wrap items-center gap-2">
           {product.badge && <Badge className="bg-primary text-primary-foreground">{product.badge}</Badge>}
           {!product.badge && product.featured && <Badge variant="warning">عرض</Badge>}
-          {outOfStock ? <Badge variant="destructive">نفدت الكمية</Badge> : <Badge variant="success">متوفر</Badge>}
+          <Badge variant={outOfStock ? 'destructive' : 'outline'}>
+            <StockLabel stock={product.availableStock} />
+          </Badge>
+          {profile?.wholesale && (
+            <Badge variant="secondary">
+              <Store className="me-1 h-3 w-3" /> تاجر جملة
+            </Badge>
+          )}
         </div>
 
         <h1 className="text-xl font-semibold">{product.name}</h1>
-        {product.ratingScore && (
-          <div className="flex items-center gap-1 text-sm text-amber-500">
+        {Number(product.ratingScore) > 0 && (
+          <div className="flex items-center gap-1 text-sm text-amber-500" aria-label={`${Number(product.ratingScore).toFixed(1)} من 5`}>
             {Array.from({ length: 5 }).map((_, i) => (
               <Star
                 key={i}
@@ -117,7 +138,49 @@ export default function ProductDetailPage({ params }: { params: Promise<{ slug: 
           )}
         </div>
 
+        {bundles.length > 0 && !outOfStock && (
+          <section aria-label="اختار الكمية" className="space-y-2">
+            <h2 className="text-sm font-semibold">اختار الكمية</h2>
+            <div className="grid gap-2">
+              <OptionRow
+                selected={bundleId === null}
+                onSelect={() => {
+                  setBundleId(null);
+                  setQuantity(1);
+                }}
+                title="قطعة واحدة"
+                price={formatMoney(unitPrice, product.currency)}
+              />
+              {bundles.map((b) => {
+                const each = Number(b.price) / b.quantity;
+                const saving = unitPrice > 0 ? Math.floor((1 - each / unitPrice) * 100) : 0;
+                const fits = b.quantity <= product.availableStock;
+                return (
+                  <OptionRow
+                    key={b.id}
+                    disabled={!fits}
+                    selected={bundleId === b.id}
+                    onSelect={() => {
+                      setBundleId(b.id);
+                      setQuantity(1);
+                    }}
+                    title={b.label?.trim() || `باقة ${b.quantity}`}
+                    subtitle={`${b.quantity} قطعة · ${formatMoney(each, product.currency)} للقطعة${fits ? '' : ' · الكمية مش كفاية'}`}
+                    price={formatMoney(b.price, product.currency)}
+                    tag={b.wholesaleOnly ? 'جملة' : saving >= 1 ? `وفّر ${saving}%` : undefined}
+                    wholesale={b.wholesaleOnly}
+                  />
+                );
+              })}
+            </div>
+          </section>
+        )}
+
         <div className="grid grid-cols-1 gap-2 rounded-lg border p-3 text-sm">
+          <div className="flex items-center gap-2">
+            <Package className="h-4 w-4 text-muted-foreground" />
+            <StockLabel stock={product.availableStock} />
+          </div>
           {product.duration && (
             <div className="flex items-center gap-2">
               <Clock className="h-4 w-4 text-muted-foreground" /> المدة: {product.duration}
@@ -156,6 +219,11 @@ export default function ProductDetailPage({ params }: { params: Promise<{ slug: 
         {feedback && (
           <p className={`mb-2 text-center text-xs ${feedback.ok ? 'text-success' : 'text-destructive'}`}>{feedback.text}</p>
         )}
+        {!outOfStock && (bundle || quantity > 1) && (
+          <p className="mb-2 text-center text-xs text-muted-foreground">
+            {quantity * unitsPer} قطعة · الإجمالي {formatMoney(linePrice * quantity, product.currency)}
+          </p>
+        )}
         <div className="flex items-center gap-2">
           {!outOfStock && (
             <div className="flex items-center rounded-md border">
@@ -167,7 +235,7 @@ export default function ProductDetailPage({ params }: { params: Promise<{ slug: 
               >
                 +
               </button>
-              <span className="w-6 text-center text-sm">{quantity}</span>
+              <span className="w-6 text-center text-sm tabular-nums">{quantity}</span>
               <button
                 type="button"
                 className="px-3 py-2 text-sm disabled:opacity-40"
@@ -189,5 +257,58 @@ export default function ProductDetailPage({ params }: { params: Promise<{ slug: 
         </div>
       </div>
     </main>
+  );
+}
+
+function OptionRow({
+  selected,
+  onSelect,
+  title,
+  subtitle,
+  price,
+  tag,
+  wholesale,
+  disabled,
+}: {
+  selected: boolean;
+  onSelect: () => void;
+  title: string;
+  subtitle?: string;
+  price: string;
+  tag?: string;
+  wholesale?: boolean;
+  disabled?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      role="radio"
+      aria-checked={selected}
+      disabled={disabled}
+      onClick={onSelect}
+      className={`flex w-full items-center gap-3 rounded-lg border p-3 text-start transition disabled:opacity-50 ${
+        selected ? 'border-primary bg-primary/5 ring-1 ring-primary' : 'hover:border-primary/40'
+      }`}
+    >
+      <span
+        className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full border ${selected ? 'border-primary bg-primary text-primary-foreground' : ''}`}
+      >
+        {selected && <Check className="h-3 w-3" />}
+      </span>
+      <span className="min-w-0 flex-1">
+        <span className="flex items-center gap-2 text-sm font-medium">
+          {title}
+          {tag && (
+            <span
+              className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${wholesale ? 'bg-secondary text-secondary-foreground' : 'bg-success/15 text-success'}`}
+            >
+              {tag}
+            </span>
+          )}
+        </span>
+        {subtitle && <span className="block text-xs text-muted-foreground">{subtitle}</span>}
+      </span>
+      <span className="shrink-0 text-sm font-semibold tabular-nums">{price}</span>
+    </button>
   );
 }

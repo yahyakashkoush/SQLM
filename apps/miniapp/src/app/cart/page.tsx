@@ -32,7 +32,7 @@ export default function CartPage() {
 
       <div className="flex flex-col gap-3">
         {items.map((item) => (
-          <Card key={item.productId}>
+          <Card key={item.key}>
             <CardContent className="flex gap-3 p-3">
               <div className="h-16 w-16 shrink-0 overflow-hidden rounded-md bg-muted">
                 {item.image ? (
@@ -42,10 +42,22 @@ export default function CartPage() {
               </div>
               <div className="flex flex-1 flex-col justify-between">
                 <div className="flex items-start justify-between gap-2">
-                  <Link href={`/products/${item.slug}`} className="text-sm font-medium">
-                    {item.name}
-                  </Link>
-                  <button type="button" onClick={() => removeItem(item.productId)} aria-label="حذف">
+                  <div className="min-w-0">
+                    <Link href={`/products/${item.slug}`} className="text-sm font-medium">
+                      {item.name}
+                    </Link>
+                    {item.bundleLabel && (
+                      <p className="text-xs text-primary">
+                        📦 {item.bundleLabel} · {item.unitsPer} قطعة
+                      </p>
+                    )}
+                  </div>
+                  <button
+                    type="button"
+                    className="-m-2 p-2"
+                    onClick={() => removeItem(item.key)}
+                    aria-label="حذف"
+                  >
                     <Trash2 className="h-4 w-4 text-muted-foreground" />
                   </button>
                 </div>
@@ -54,22 +66,22 @@ export default function CartPage() {
                   <div className="flex items-center gap-2">
                     <button
                       type="button"
-                      className="rounded-md border p-1 disabled:opacity-40"
-                      disabled={item.quantity >= item.availableStock}
-                      onClick={() => setQuantity(item.productId, item.quantity + 1)}
+                      className="rounded-md border p-2 disabled:opacity-40"
+                      disabled={(item.quantity + 1) * item.unitsPer > item.availableStock}
+                      onClick={() => setQuantity(item.key, item.quantity + 1)}
                       aria-label="زيادة"
                     >
-                      <Plus className="h-3 w-3" />
+                      <Plus className="h-3.5 w-3.5" />
                     </button>
-                    <span className="w-6 text-center text-sm">{item.quantity}</span>
+                    <span className="w-6 text-center text-sm tabular-nums">{item.quantity}</span>
                     <button
                       type="button"
-                      className="rounded-md border p-1 disabled:opacity-40"
+                      className="rounded-md border p-2 disabled:opacity-40"
                       disabled={item.quantity <= 1}
-                      onClick={() => setQuantity(item.productId, item.quantity - 1)}
+                      onClick={() => setQuantity(item.key, item.quantity - 1)}
                       aria-label="تقليل"
                     >
-                      <Minus className="h-3 w-3" />
+                      <Minus className="h-3.5 w-3.5" />
                     </button>
                   </div>
                 </div>

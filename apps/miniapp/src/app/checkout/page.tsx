@@ -3,10 +3,11 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { CheckCircle2, Circle, Gift, Loader2, Star, TicketPercent, X } from 'lucide-react';
-import { Button, Card, CardContent, Input, Separator } from '@sqlm/ui';
-import { usePaymentMethods, useStoreInfo } from '@/lib/queries';
-import { cartSubtotal, useCartStore } from '@/store/cart-store';
+import Link from 'next/link';
+import { CheckCircle2, Circle, Gift, Loader2, Star, TicketPercent, UserRound, X } from 'lucide-react';
+import { Button, Card, CardContent, Input, Label, Separator } from '@sqlm/ui';
+import { usePaymentMethods, useProfile, useStoreInfo } from '@/lib/queries';
+import { cartLines, cartSubtotal, useCartStore } from '@/store/cart-store';
 import { useAuthStore } from '@/store/auth-store';
 import { api, ApiError } from '@/lib/api';
 import { MEMBER_DISCOUNT_LABELS } from '@/types/api';
@@ -30,8 +31,13 @@ export default function CheckoutPage() {
   const [appliedCode, setAppliedCode] = useState<string | null>(null);
   const [couponError, setCouponError] = useState<string | null>(null);
   const [checkingCoupon, setCheckingCoupon] = useState(false);
+  const { data: profile } = useProfile();
+  const [fullName, setFullName] = useState('');
+  const [contactPhone, setContactPhone] = useState('');
+  const [contactError, setContactError] = useState<string | null>(null);
+  const needsContact = profile?.needsContact ?? false;
 
-  const lines = items.map((i) => ({ productId: i.productId, quantity: i.quantity }));
+  const lines = cartLines(items);
   const quoteKey = ['order-quote', lines, appliedCode] as const;
 
   // The server prices the cart — member discount, coupon, and the amount to
@@ -105,8 +111,16 @@ export default function CheckoutPage() {
       setError('استنى لحظة لحد ما السعر يتحسب.');
       return;
     }
+    if (needsContact) {
+      const digits = contactPhone.replace(/[^\d٠-٩۰-۹]/g, '');
+      if (fullName.trim().length < 2 || digits.length < 8) {
+        setContactError('اكتب اسمك ورقم موبايل صحيح — بنطلبهم مرة واحدة بس.');
+        return;
+      }
+    }
     setSubmitting(true);
     setError(null);
+    setContactError(null);
     try {
       const key = ensureIdempotencyKey();
       const order = await api.checkout({
@@ -115,16 +129,22 @@ export default function CheckoutPage() {
         idempotencyKey: key,
         couponCode: appliedCode ?? undefined,
         expectedTotal: Number(priced.total),
+        ...(needsContact ? { fullName: fullName.trim(), contactPhone: contactPhone.trim() } : {}),
       });
       clearCart();
       clearIdempotencyKey();
       // The order may now be holding the welcome gift.
       void queryClient.invalidateQueries({ queryKey: ['perks'] });
+      void queryClient.invalidateQueries({ queryKey: ['profile'] });
       router.push(`/orders/${order.id}`);
     } catch (err) {
       if (err instanceof ApiError && err.code === 'PRICE_CHANGED') {
         // Show the new price rather than charging it: the customer confirms again.
         await quote.refetch();
+      }
+      if (err instanceof ApiError && err.code === 'CONTACT_REQUIRED') {
+        void queryClient.invalidateQueries({ queryKey: ['profile'] });
+        setContactError(err.message);
       }
       setError(err instanceof ApiError ? err.message : 'فشل إنشاء الطلب، حاول مرة أخرى.');
       setSubmitting(false);
@@ -138,11 +158,16 @@ export default function CheckoutPage() {
       <Card>
         <CardContent className="flex flex-col gap-2 p-4">
           {items.map((item) => (
-            <div key={item.productId} className="flex items-center justify-between text-sm">
-              <span>
+            <div key={item.key} className="flex items-start justify-between gap-3 text-sm">
+              <span className="min-w-0">
                 {item.name} × {item.quantity}
+                {item.bundleLabel && (
+                  <span className="block text-xs text-primary">
+                    📦 {item.bundleLabel} — {item.quantity * item.unitsPer} قطعة
+                  </span>
+                )}
               </span>
-              <span>{formatMoney(Number(item.price) * item.quantity, item.currency)}</span>
+              <span className="shrink-0 tabular-nums">{formatMoney(Number(item.price) * item.quantity, item.currency)}</span>
             </div>
           ))}
           <Separator className="my-1" />
@@ -190,6 +215,48 @@ export default function CheckoutPage() {
           )}
         </CardContent>
       </Card>
+
+      {needsContact && (
+        <Card className="border-primary/40">
+          <CardContent className="flex flex-col gap-3 p-4">
+            <div>
+              <p className="flex items-center gap-2 text-sm font-semibold">
+                <UserRound className="h-4 w-4" /> بياناتك (مرة واحدة بس)
+              </p>
+              <p className="mt-0.5 text-xs text-muted-foreground">
+                بنستخدمها للتواصل معاك بخصوص طلباتك بس، ومش بنطلبها تاني في الطلبات الجاية.
+              </p>
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="c-name">الاسم</Label>
+              <Input
+                id="c-name"
+                autoComplete="name"
+                value={fullName}
+                maxLength={80}
+                onChange={(e) => setFullName(e.target.value)}
+                placeholder="مثلاً: أحمد محمد"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="c-phone">رقم الموبايل</Label>
+              <Input
+                id="c-phone"
+                type="tel"
+                inputMode="tel"
+                autoComplete="tel"
+                dir="ltr"
+                className="text-end"
+                value={contactPhone}
+                maxLength={24}
+                onChange={(e) => setContactPhone(e.target.value)}
+                placeholder="01XXXXXXXXX"
+              />
+            </div>
+            {contactError && <p className="text-xs text-destructive">{contactError}</p>}
+          </CardContent>
+        </Card>
+      )}
 
       <Card>
         <CardContent className="flex flex-col gap-2 p-4">
@@ -282,6 +349,13 @@ export default function CheckoutPage() {
           {store?.deliveryTime && ` التسليم ${store.deliveryTime} بعد تأكيد الدفع.`}
         </p>
         {store?.proofWarning && <p className="text-xs text-destructive">{store.proofWarning}</p>}
+        <p className="text-xs text-muted-foreground">
+          بتأكيد الطلب انت موافق على{' '}
+          <Link href="/terms" className="text-primary underline">
+            الشروط والأحكام
+          </Link>
+          .
+        </p>
       </div>
 
       {error && <p className="text-sm text-destructive">{error}</p>}

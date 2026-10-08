@@ -1,22 +1,25 @@
 'use client';
 
 import Link from 'next/link';
-import { ChevronLeft, LifeBuoy, Package, ShoppingCart, User } from 'lucide-react';
+import { ChevronLeft, FileText, LifeBuoy, Package, ShoppingCart, Store, User } from 'lucide-react';
 import { Card, CardContent } from '@sqlm/ui';
 import { useAuthStore } from '@/store/auth-store';
 import { useTelegram } from '@/components/providers/telegram-provider';
-import { useStoreInfo } from '@/lib/queries';
+import { useProfile, useStoreInfo } from '@/lib/queries';
 import { PerksBanner } from '@/components/account/perks-banner';
 
 export default function AccountPage() {
   const customer = useAuthStore((s) => s.customer);
   const { authError, inTelegram } = useTelegram();
   const store = useStoreInfo();
+  const { data: profile } = useProfile();
 
   const links = [
     { href: '/orders', label: 'طلباتي', icon: Package },
     { href: '/cart', label: 'السلة', icon: ShoppingCart },
+    { href: '/wholesale', label: profile?.wholesale ? 'أسعار الجملة' : 'عضوية تجار الجملة', icon: Store },
     { href: '/support', label: 'الدعم الفني', icon: LifeBuoy },
+    { href: '/terms', label: 'الشروط والأحكام', icon: FileText },
   ];
 
   return (
@@ -29,9 +32,15 @@ export default function AccountPage() {
             <div className="flex h-12 w-12 items-center justify-center rounded-full bg-primary/10">
               <User className="h-6 w-6 text-primary" />
             </div>
-            <div>
-              <p className="text-sm font-medium">{customer.firstName ?? 'مستخدم تيليجرام'}</p>
+            <div className="min-w-0">
+              <p className="text-sm font-medium">{profile?.fullName ?? customer.firstName ?? 'مستخدم تيليجرام'}</p>
               {customer.username && <p className="text-xs text-muted-foreground" dir="ltr">@{customer.username}</p>}
+              {profile?.contactPhone && (
+                <p className="text-xs text-muted-foreground" dir="ltr">
+                  {profile.contactPhone}
+                </p>
+              )}
+              {profile?.wholesale && <p className="text-xs font-medium text-primary">🏪 تاجر جملة</p>}
             </div>
           </CardContent>
         </Card>

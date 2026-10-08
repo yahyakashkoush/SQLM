@@ -118,7 +118,7 @@ export default function DeliveryTemplatesPage() {
           {data.map((t) => (
             <Card key={t.id} className="cursor-pointer hover:border-primary/50" onClick={() => can('products.write') && open(t)}>
               <CardContent className="space-y-2 p-4">
-                <div className="flex items-center justify-between">
+                <div className="flex items-center justify-between flex-wrap gap-2">
                   <p className="font-medium" dir="auto">{t.name}</p>
                   <span className="text-xs text-muted-foreground">{t._count?.products ?? 0} products</span>
                 </div>

@@ -65,7 +65,7 @@ export function ImageUploader({
                 Cover
               </span>
             )}
-            <div className="absolute inset-x-0 bottom-0 flex justify-between bg-background/80 p-0.5 opacity-0 transition group-hover:opacity-100">
+            <div className="absolute inset-x-0 bottom-0 flex justify-between bg-background/80 p-0.5 opacity-100 transition md:opacity-0 md:group-hover:opacity-100">
               <button type="button" disabled={i === 0} onClick={() => move(i, i - 1)} className="p-0.5 disabled:opacity-30" aria-label="Move left">
                 <ArrowLeft className="h-3.5 w-3.5" />
               </button>

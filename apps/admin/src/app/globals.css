@@ -65,3 +65,18 @@
     @apply bg-background text-foreground;
   }
 }
+
+@layer base {
+  html {
+    -webkit-tap-highlight-color: transparent;
+    text-size-adjust: 100%;
+  }
+  /* iOS zooms the page into any field under 16px; keep phones at 16. */
+  @media (max-width: 767px) {
+    input,
+    select,
+    textarea {
+      font-size: 16px !important;
+    }
+  }
+}

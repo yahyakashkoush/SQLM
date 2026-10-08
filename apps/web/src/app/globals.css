@@ -4,64 +4,79 @@
 
 @layer base {
   :root {
-    --background: 0 0% 100%;
-    --foreground: 240 10% 3.9%;
-    --card: 0 0% 100%;
-    --card-foreground: 240 10% 3.9%;
-    --popover: 0 0% 100%;
-    --popover-foreground: 240 10% 3.9%;
-    --primary: 243 75% 59%;
-    --primary-foreground: 0 0% 98%;
-    --secondary: 240 4.8% 95.9%;
-    --secondary-foreground: 240 5.9% 10%;
-    --muted: 240 4.8% 95.9%;
-    --muted-foreground: 240 3.8% 46.1%;
-    --accent: 240 4.8% 95.9%;
-    --accent-foreground: 240 5.9% 10%;
-    --destructive: 0 84.2% 60.2%;
-    --destructive-foreground: 0 0% 98%;
-    --success: 142 76% 36%;
-    --success-foreground: 0 0% 98%;
-    --warning: 38 92% 50%;
-    --warning-foreground: 48 96% 10%;
-    --border: 240 5.9% 90%;
-    --input: 240 5.9% 90%;
-    --ring: 243 75% 59%;
-    --radius: 0.75rem;
+    /* One deliberate palette: warm paper, ink, and Telegram blue. */
+    --paper: 247 245 240;
+    --paper-deep: 238 234 225;
+    --ink: 19 21 27;
+    --ink-soft: 88 92 104;
+    --line: 226 221 210;
+    --tg: 42 171 238;
+    --tg-deep: 22 120 186;
+    --saffron: 236 160 52;
+
+    /* Tokens the shared UI package reads. */
+    --background: 43 27% 95%;
+    --foreground: 228 17% 9%;
+    --border: 41 22% 85%;
+    --radius: 0.875rem;
+    color-scheme: light;
   }
 
-  .dark {
-    --background: 240 10% 3.9%;
-    --foreground: 0 0% 98%;
-    --card: 240 10% 5.5%;
-    --card-foreground: 0 0% 98%;
-    --popover: 240 10% 5.5%;
-    --popover-foreground: 0 0% 98%;
-    --primary: 243 75% 65%;
-    --primary-foreground: 240 10% 3.9%;
-    --secondary: 240 3.7% 15.9%;
-    --secondary-foreground: 0 0% 98%;
-    --muted: 240 3.7% 15.9%;
-    --muted-foreground: 240 5% 64.9%;
-    --accent: 240 3.7% 15.9%;
-    --accent-foreground: 0 0% 98%;
-    --destructive: 0 62.8% 30.6%;
-    --destructive-foreground: 0 0% 98%;
-    --success: 142 70% 45%;
-    --success-foreground: 144 61% 10%;
-    --warning: 38 92% 50%;
-    --warning-foreground: 48 96% 10%;
-    --border: 240 3.7% 15.9%;
-    --input: 240 3.7% 15.9%;
-    --ring: 243 75% 65%;
+  * {
+    @apply border-line;
+  }
+
+  html {
+    scroll-behavior: smooth;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  body {
+    @apply bg-paper font-sans text-ink antialiased;
+    font-feature-settings: 'ss01';
+  }
+
+  h1,
+  h2,
+  h3 {
+    @apply font-display;
+    text-wrap: balance;
+  }
+
+  ::selection {
+    background: rgb(var(--tg) / 0.25);
+  }
+
+  :focus-visible {
+    outline: 2px solid rgb(var(--tg-deep));
+    outline-offset: 3px;
+    border-radius: 6px;
   }
 }
 
-@layer base {
-  * {
-    @apply border-border;
+@layer components {
+  .site-container {
+    @apply mx-auto w-full max-w-site px-4 sm:px-6;
   }
-  body {
-    @apply bg-background text-foreground;
+  .eyebrow {
+    @apply text-xs font-semibold tracking-[0.08em] text-tg-deep;
+  }
+  .btn-primary {
+    @apply inline-flex items-center justify-center gap-2 rounded-full bg-ink px-6 py-3 text-sm font-semibold text-paper transition hover:bg-ink/85 active:scale-[0.98];
+  }
+  .btn-ghost {
+    @apply inline-flex items-center justify-center gap-2 rounded-full border border-ink/15 px-6 py-3 text-sm font-semibold text-ink transition hover:border-ink/40 active:scale-[0.98];
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    transition: none !important;
   }
 }

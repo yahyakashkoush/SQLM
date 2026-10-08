@@ -71,7 +71,7 @@ export default function DashboardPage() {
           {cards.map((card) => (
             <Link key={card.label} href={card.href}>
               <Card className={card.urgent ? 'border-warning' : undefined}>
-                <CardContent className="flex items-center justify-between p-4">
+                <CardContent className="flex items-center justify-between p-4 flex-wrap gap-2">
                   <div>
                     <p className="text-xs text-muted-foreground">{card.label}</p>
                     <p className="text-2xl font-semibold">{card.value ?? 0}</p>

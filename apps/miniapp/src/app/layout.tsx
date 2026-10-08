@@ -4,6 +4,7 @@ import { TelegramProvider } from '@/components/providers/telegram-provider';
 import { QueryProvider } from '@/components/providers/query-provider';
 import { StoreHydration } from '@/components/providers/store-hydration';
 import { BottomNav } from '@/components/layout/bottom-nav';
+import { RestrictedGate } from '@/components/layout/restricted-gate';
 
 export const metadata: Metadata = {
   title: 'المتجر',
@@ -24,7 +25,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <QueryProvider>
           <StoreHydration />
           <TelegramProvider>
-            <div className="pb-16">{children}</div>
+            <div className="pb-16">
+              <RestrictedGate>{children}</RestrictedGate>
+            </div>
             <BottomNav />
           </TelegramProvider>
         </QueryProvider>

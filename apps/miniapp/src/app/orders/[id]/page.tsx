@@ -12,7 +12,7 @@ import {
   Upload,
   XCircle,
 } from 'lucide-react';
-import { Button, Card, CardContent, Separator } from '@sqlm/ui';
+import { Button, Card, CardContent, Input, Separator } from '@sqlm/ui';
 import type { OrderStatus } from '@sqlm/shared';
 import { useDeliveries, useOrder, useStoreInfo } from '@/lib/queries';
 import { OrderStatusBadge } from '@/components/orders/order-status-badge';
@@ -59,6 +59,7 @@ export default function OrderDetailPage({ params }: { params: Promise<{ id: stri
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
+  const [senderReference, setSenderReference] = useState('');
   const [confirmingCancel, setConfirmingCancel] = useState(false);
   const [cancelError, setCancelError] = useState<string | null>(null);
   const [cancelling, setCancelling] = useState(false);
@@ -102,13 +103,17 @@ export default function OrderDetailPage({ params }: { params: Promise<{ id: stri
     setUploading(true);
     setUploadError(null);
     try {
-      await api.uploadPaymentProof(order.id, file);
+      await api.uploadPaymentProof(order.id, file, isCrypto ? undefined : senderReference);
       await refetch();
       void queryClient.invalidateQueries({ queryKey: ['orders'] });
     } catch (err) {
       setUploadError(
         err instanceof ApiError && err.code === 'TOO_MANY_PROOFS'
           ? 'وصلت للحد الأقصى من محاولات رفع الإيصال للطلب ده. كلّم الدعم وهنراجع معاك.'
+          : err instanceof ApiError && err.code === 'DUPLICATE_PROOF'
+            ? err.message
+            : err instanceof ApiError && err.status === 401
+              ? 'حسابك اتوقف مؤقتاً. افتح البوت علشان تعرف التفاصيل أو تقدّم التماس.'
           : err instanceof ApiError && err.status === 413
             ? 'الملف كبير جداً — ابعت صورة أصغر من 10 ميجا.'
             : err instanceof ApiError
@@ -222,9 +227,14 @@ export default function OrderDetailPage({ params }: { params: Promise<{ id: stri
                     className="h-8 w-8 rounded object-cover"
                   />
                 )}
-                {item.productNameSnapshot} × {item.quantity}
+                <span className="min-w-0">
+                  {item.productNameSnapshot} × {item.quantity}
+                  {item.bundleLabel && <span className="block text-xs text-primary">📦 {item.bundleLabel}</span>}
+                </span>
               </span>
-              <span>{formatMoney(Number(item.unitPrice) * item.quantity, order.currency)}</span>
+              <span className="shrink-0 tabular-nums">
+                {formatMoney(Number(item.lineTotal ?? Number(item.unitPrice) * item.quantity), order.currency)}
+              </span>
             </div>
           ))}
           <Separator className="my-1" />
@@ -330,6 +340,24 @@ export default function OrderDetailPage({ params }: { params: Promise<{ id: stri
                   ? 'لو حوّلت وعدّت أكتر من 10 دقايق من غير تأكيد، ارفع صورة التحويل وهنراجعه يدوياً.'
                   : 'سكرين شوت أو صورة لإيصال التحويل (JPG أو PNG أو PDF). تقدر كمان تبعت الصورة مباشرة في شات البوت.'}
               </p>
+              {!isCrypto && (
+                <div className="space-y-1.5">
+                  <label htmlFor="sender-ref" className="text-sm font-medium">
+                    الرقم أو الحساب اللي حوّلت منه
+                  </label>
+                  <Input
+                    id="sender-ref"
+                    dir="ltr"
+                    inputMode="tel"
+                    className="text-end"
+                    maxLength={64}
+                    value={senderReference}
+                    onChange={(e) => setSenderReference(e.target.value)}
+                    placeholder="01XXXXXXXXX أو اسم حساب إنستاباي"
+                  />
+                  <p className="text-[11px] text-muted-foreground">علشان نلاقي تحويلك على كشف الحساب بسرعة.</p>
+                </div>
+              )}
               <input
                 ref={fileInputRef}
                 type="file"
@@ -340,7 +368,10 @@ export default function OrderDetailPage({ params }: { params: Promise<{ id: stri
                   if (file) void handleFileSelected(file);
                 }}
               />
-              <Button disabled={uploading} onClick={() => fileInputRef.current?.click()}>
+              <Button
+                disabled={uploading || (!isCrypto && senderReference.trim().length < 4)}
+                onClick={() => fileInputRef.current?.click()}
+              >
                 {uploading ? (
                   <Loader2 className="h-4 w-4 animate-spin" />
                 ) : (

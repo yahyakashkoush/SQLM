@@ -180,6 +180,10 @@ services:
       args:
         NEXT_PUBLIC_API_URL: ${PUBLIC_API_URL:?PUBLIC_API_URL is required}
     restart: unless-stopped
+    environment:
+      # Server-side rendering talks to the API over the internal network,
+      # not back out through the public domain.
+      API_INTERNAL_URL: http://api:4000
     expose:
       - '3000'
     depends_on:

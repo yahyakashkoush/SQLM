@@ -23,7 +23,7 @@ export const MAX_PROOF_FILE_BYTES = 10 * 1024 * 1024;
 /** Honest customers need one, sometimes two. Past this it is guessing or abuse, and it costs disk. */
 export const MAX_PROOFS_PER_ORDER = 5;
 /** Rejections that say nothing about honesty — a blurry photo is not a strike. */
-export const BENIGN_REJECT_REASONS: readonly string[] = ['الإيصال مش واضح'];
+export const BENIGN_REJECT_REASONS: readonly string[] = ['الإيصال مش واضح', 'الإيصال غير واضح'];
 export const MAX_SENDER_REFERENCE_LENGTH = 64;
 
 /** Digits, letters, @ . _ - + and spaces: a phone, an InstaPay handle, an account number. */
