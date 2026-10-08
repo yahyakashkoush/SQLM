@@ -19,6 +19,7 @@ import { api, ApiError } from '@/lib/api';
 import { useWallet, useWalletTopUps } from '@/lib/queries';
 import { formatDate, formatMoney } from '@/lib/format';
 import { CopyButton } from '@/components/copy-button';
+import { PaymentLogo } from '@/components/payment-logo';
 import type { TopUpMethod, WalletEntryType } from '@/types/api';
 
 const ENTRY_LABEL: Record<WalletEntryType, string> = {
@@ -296,11 +297,14 @@ function TopUpFlow({ currency, onDone }: { currency: string; onDone: () => void 
                     onClick={() => (setMethod(m), setStep(3))}
                     className="flex w-full items-center justify-between gap-3 rounded-xl border p-3 text-start transition hover:border-primary"
                   >
-                    <div className="min-w-0">
-                      <p className="text-sm font-medium">{m.name}</p>
-                      {m.description && (
-                        <p className="truncate text-xs text-muted-foreground">{m.description}</p>
-                      )}
+                    <div className="flex min-w-0 items-center gap-3">
+                      <PaymentLogo src={m.logoUrl} />
+                      <div className="min-w-0">
+                        <p className="text-sm font-medium">{m.name}</p>
+                        {m.description && (
+                          <p className="truncate text-xs text-muted-foreground">{m.description}</p>
+                        )}
+                      </div>
                     </div>
                     <span className="shrink-0 text-sm font-semibold tabular-nums" dir="ltr">
                       {formatMoney(m.payAmount, m.payCurrency)}

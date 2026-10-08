@@ -27,6 +27,7 @@ interface FormState {
   accountNumber: string;
   instructions: string;
   qrCodeUrl: string[];
+  logoUrl: string[];
   currency: string;
   displayOrder: string;
   enabled: boolean;
@@ -43,6 +44,7 @@ const EMPTY: FormState = {
   accountNumber: '',
   instructions: '',
   qrCodeUrl: [],
+  logoUrl: [],
   currency: 'EGP',
   displayOrder: '0',
   enabled: true,
@@ -59,6 +61,7 @@ const toForm = (m: PaymentMethod): FormState => ({
   accountNumber: m.accountNumber ?? '',
   instructions: m.instructions ?? '',
   qrCodeUrl: m.qrCodeUrl ? [m.qrCodeUrl] : [],
+  logoUrl: m.logoUrl ? [m.logoUrl] : [],
   currency: m.currency,
   displayOrder: String(m.displayOrder),
   enabled: m.enabled,
@@ -100,6 +103,7 @@ export default function PaymentMethodsPage() {
         accountNumber: form.accountNumber.trim() || null,
         instructions: form.instructions.trim() || null,
         qrCodeUrl: form.qrCodeUrl[0] ?? null,
+        logoUrl: form.logoUrl[0] ?? null,
         currency: form.currency.trim().toUpperCase(),
         displayOrder: Number(form.displayOrder || 0),
         enabled: form.enabled,
@@ -167,6 +171,18 @@ export default function PaymentMethodsPage() {
               </Field>
               <Field label="Payment instructions" htmlFor="pm-instructions" className="sm:col-span-2" hint="Shown on the order page while the customer pays.">
                 <Textarea id="pm-instructions" dir="auto" rows={4} value={form.instructions} onChange={(e) => set('instructions', e.target.value)} />
+              </Field>
+              <Field
+                label="Logo"
+                className="sm:col-span-2"
+                hint="Square PNG/SVG with a transparent or white background works best. Shown on the website, Mini App checkout and wallet top-up."
+              >
+                <ImageUploader max={1} value={form.logoUrl} onChange={(v) => set('logoUrl', v)} />
+                {form.logoUrl.length > 0 && (
+                  <button type="button" className="text-xs text-destructive underline" onClick={() => set('logoUrl', [])}>
+                    Remove logo
+                  </button>
+                )}
               </Field>
               <Field label="QR code image (optional)" className="sm:col-span-2">
                 <ImageUploader max={1} value={form.qrCodeUrl} onChange={(v) => set('qrCodeUrl', v)} />
@@ -263,7 +279,22 @@ export default function PaymentMethodsPage() {
         error={loadError}
         empty="No payment methods configured."
         columns={[
-          { header: 'Name', cell: (r) => <span dir="auto" className="font-medium">{r.name}</span> },
+          {
+            header: 'Name',
+            cell: (r) => (
+              <span className="flex items-center gap-2">
+                {r.logoUrl ? (
+                  // eslint-disable-next-line @next/next/no-img-element -- uploaded to the store's own storage host
+                  <img src={r.logoUrl} alt="" className="h-8 w-8 shrink-0 rounded-md border bg-white object-contain p-0.5" />
+                ) : (
+                  <span className="h-8 w-8 shrink-0 rounded-md border border-dashed" />
+                )}
+                <span dir="auto" className="font-medium">
+                  {r.name}
+                </span>
+              </span>
+            ),
+          },
           { header: 'Account', cell: (r) => <span dir="auto">{r.accountNumber ?? '—'}</span> },
           { header: 'Currency', cell: (r) => r.currency },
           {

@@ -613,6 +613,8 @@ model PaymentMethod {
   accountNumber String?
   instructions  String?
   qrCodeUrl     String?
+  /// Brand mark shown next to the method on the site, Mini App and bot.
+  logoUrl       String?
   currency      String   @default("USD")
   enabled       Boolean  @default(true)
   displayOrder  Int      @default(0)

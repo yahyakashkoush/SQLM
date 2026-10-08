@@ -26,7 +26,14 @@ export interface SiteData {
   supportContact: string;
   deliveryTime: string;
   terms: string;
-  paymentMethods: Array<{ id: string; name: string; description: string | null; kind: 'manual' | 'crypto'; currency: string }>;
+  paymentMethods: Array<{
+    id: string;
+    name: string;
+    description: string | null;
+    logoUrl?: string | null;
+    kind: 'manual' | 'crypto';
+    currency: string;
+  }>;
   categories: Array<{ id: string; slug: string; name: string }>;
   products: SiteProduct[];
 }

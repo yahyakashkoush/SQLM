@@ -101,6 +101,7 @@ export interface TopUpMethod {
   accountNumber: string | null;
   instructions: string | null;
   qrCodeUrl: string | null;
+  logoUrl?: string | null;
   currency: string;
   payAmount: string;
   payCurrency: string;
@@ -150,6 +151,7 @@ export interface PaymentMethod {
   accountNumber: string | null;
   instructions: string | null;
   qrCodeUrl: string | null;
+  logoUrl?: string | null;
   currency: string;
   provider?: PaymentProvider;
 }

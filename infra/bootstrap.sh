@@ -159,6 +159,16 @@ fi
 say "Building and starting (first build takes 5–15 minutes)"
 "${COMPOSE[@]}" up -d --build --remove-orphans
 
+# `up` leaves caddy alone when only its Caddyfile changed, and git replaces the
+# file so the running container still sees the old one. Restart it to pick up
+# the new config — only when it actually differs.
+want=$(sha256sum "$DIR/infra/caddy/Caddyfile" | cut -d' ' -f1)
+have=$("${COMPOSE[@]}" exec -T caddy sha256sum /etc/caddy/Caddyfile </dev/null 2>/dev/null | cut -d' ' -f1 || true)
+if [ -n "$have" ] && [ "$want" != "$have" ]; then
+  say "Reloading the web proxy with the new config"
+  "${COMPOSE[@]}" restart caddy
+fi
+
 say "Waiting for the API to become ready"
 ready=0
 for _ in $(seq 1 60); do

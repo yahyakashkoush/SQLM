@@ -515,7 +515,7 @@ export class OrdersService {
       include: {
         items: { include: { product: { select: { slug: true, images: true } } } },
         paymentMethod: {
-          select: { id: true, name: true, description: true, accountNumber: true, instructions: true, qrCodeUrl: true, currency: true, provider: true },
+          select: { id: true, name: true, description: true, accountNumber: true, instructions: true, qrCodeUrl: true, logoUrl: true, currency: true, provider: true },
         },
         paymentProofs: {
           orderBy: { uploadedAt: 'desc' },

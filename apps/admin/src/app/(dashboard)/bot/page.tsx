@@ -20,6 +20,13 @@ export default function BotPage() {
   const [error, setError] = useState<string | null>(null);
 
   const { data: status, isLoading, refetch, isFetching } = useQuery({ queryKey: ['bot'], queryFn: () => api.botStatus() });
+  // Telegram keeps last_error_message until the next failure replaces it, so a
+  // one-off blip (e.g. a deploy restart) would read as "broken" forever. Treat
+  // it as live only while updates are queued or the error is recent.
+  const lastErrorAt = status?.webhook?.lastErrorDate ? new Date(status.webhook.lastErrorDate).getTime() : 0;
+  const webhookFailing =
+    Boolean(status?.webhook?.lastErrorMessage) &&
+    ((status?.webhook?.pendingUpdateCount ?? 0) > 0 || Date.now() - lastErrorAt < 10 * 60_000);
 
   useEffect(() => {
     if (!status) return;
@@ -72,7 +79,7 @@ export default function BotPage() {
           <CardContent className="space-y-3 p-4 text-sm">
             <div className="flex items-center justify-between flex-wrap gap-2">
               <h2 className="font-semibold">Connection</h2>
-              <Badge variant={status.ready && !status.webhook?.lastErrorMessage ? 'success' : 'destructive'}>
+              <Badge variant={status.ready && !webhookFailing ? 'success' : 'destructive'}>
                 {status.ready ? 'connected' : 'not connected'}
               </Badge>
             </div>
@@ -90,12 +97,18 @@ export default function BotPage() {
               <div className="space-y-1 rounded bg-muted p-2 text-xs">
                 <p>Webhook: {status.webhook.url || <span className="text-destructive">not set</span>}</p>
                 <p>Pending updates: {status.webhook.pendingUpdateCount}</p>
-                {status.webhook.lastErrorMessage && (
-                  <p className="text-destructive">
-                    Last error: {status.webhook.lastErrorMessage}
-                    {status.webhook.lastErrorDate && ` (${new Date(status.webhook.lastErrorDate).toLocaleString()})`}
-                  </p>
-                )}
+                {status.webhook.lastErrorMessage &&
+                  (webhookFailing ? (
+                    <p className="text-destructive">
+                      Last error: {status.webhook.lastErrorMessage}
+                      {status.webhook.lastErrorDate && ` (${new Date(status.webhook.lastErrorDate).toLocaleString()})`}
+                    </p>
+                  ) : (
+                    <p className="text-muted-foreground">
+                      ✓ Recovered — last hiccup {status.webhook.lastErrorDate ? new Date(status.webhook.lastErrorDate).toLocaleString() : ''} (
+                      {status.webhook.lastErrorMessage}). Nothing is waiting; Telegram re-sent what it missed.
+                    </p>
+                  ))}
               </div>
             )}
             {!status.configured && (

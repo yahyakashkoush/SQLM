@@ -580,6 +580,7 @@ export interface PaymentMethod {
   accountNumber: string | null;
   instructions: string | null;
   qrCodeUrl: string | null;
+  logoUrl: string | null;
   currency: string;
   enabled: boolean;
   displayOrder: number;

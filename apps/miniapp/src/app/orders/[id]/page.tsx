@@ -22,6 +22,7 @@ import { WalletPayCard } from '@/components/orders/wallet-pay-card';
 import { api, ApiError } from '@/lib/api';
 import { MEMBER_DISCOUNT_LABELS } from '@/types/api';
 import { formatDate, formatMoney } from '@/lib/format';
+import { PaymentLogo } from '@/components/payment-logo';
 
 const STATUS_HELP: Record<OrderStatus, string> = {
   CREATED: 'جاري تجهيز طلبك…',
@@ -294,7 +295,10 @@ export default function OrderDetailPage({ params }: { params: Promise<{ id: stri
           {method && !isCrypto && (
             <Card>
               <CardContent className="flex flex-col gap-3 p-4">
-                <p className="text-sm font-semibold">الدفع عن طريق {method.name}</p>
+                <div className="flex items-center gap-2">
+                  <PaymentLogo src={method.logoUrl} className="h-8 w-8" />
+                  <p className="text-sm font-semibold">الدفع عن طريق {method.name}</p>
+                </div>
                 <div className="flex items-center justify-between gap-2 rounded-lg bg-muted p-3">
                   <div>
                     <p className="text-xs text-muted-foreground">المبلغ المطلوب</p>

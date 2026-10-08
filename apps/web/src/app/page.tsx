@@ -131,13 +131,20 @@ export default async function HomePage() {
               <ul className="grid gap-3 sm:grid-cols-2">
                 {site.paymentMethods.map((m) => (
                   <li key={m.id} className="flex items-start gap-4 rounded-2xl border bg-paper p-5">
-                    <span
-                      className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl ${
-                        m.kind === 'crypto' ? 'bg-saffron/15 text-saffron' : 'bg-tg/10 text-tg-deep'
-                      }`}
-                    >
-                      {m.kind === 'crypto' ? <Coins className="h-5 w-5" /> : <Wallet className="h-5 w-5" />}
-                    </span>
+                    {m.logoUrl ? (
+                      <span className="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-xl border bg-white">
+                        {/* eslint-disable-next-line @next/next/no-img-element -- uploaded to the store's own storage host */}
+                        <img src={m.logoUrl} alt={m.name} loading="lazy" className="h-full w-full object-contain p-1.5" />
+                      </span>
+                    ) : (
+                      <span
+                        className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-xl ${
+                          m.kind === 'crypto' ? 'bg-saffron/15 text-saffron' : 'bg-tg/10 text-tg-deep'
+                        }`}
+                      >
+                        {m.kind === 'crypto' ? <Coins className="h-5 w-5" /> : <Wallet className="h-5 w-5" />}
+                      </span>
+                    )}
                     <div className="min-w-0 space-y-1">
                       <p className="font-semibold" dir="auto">
                         {m.name}

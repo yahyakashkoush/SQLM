@@ -36,6 +36,11 @@ export class CreatePaymentMethodDto {
 
   @IsOptional()
   @IsString()
+  @MaxLength(500)
+  logoUrl?: string;
+
+  @IsOptional()
+  @IsString()
   @Matches(/^[A-Z]{3}$/)
   currency?: string;
 

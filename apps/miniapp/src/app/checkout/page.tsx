@@ -12,6 +12,7 @@ import { useAuthStore } from '@/store/auth-store';
 import { api, ApiError } from '@/lib/api';
 import { MEMBER_DISCOUNT_LABELS } from '@/types/api';
 import { formatMoney } from '@/lib/format';
+import { PaymentLogo } from '@/components/payment-logo';
 
 /** The wallet is not a payment method row; it gets its own sentinel in the picker. */
 const WALLET = '__wallet__';
@@ -370,7 +371,8 @@ export default function CheckoutPage() {
                 ) : (
                   <Circle className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
                 )}
-                <span className="flex-1">
+                <PaymentLogo src={method.logoUrl} />
+                <span className="min-w-0 flex-1">
                   <span className="block font-medium">{method.name}</span>
                   {method.description && (
                     <span className="block text-xs text-muted-foreground">

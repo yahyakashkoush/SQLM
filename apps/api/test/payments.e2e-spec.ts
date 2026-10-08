@@ -164,6 +164,28 @@ describe('Payments + Payment Proofs (e2e)', () => {
       expect(res.body.some((m: { id: string }) => m.id === paymentMethodIds[0])).toBe(true);
       expect(res.body.some((m: { id: string }) => m.id === disabled.id)).toBe(false);
     });
+
+    it('a logo set by staff shows on the public listing and the site, and can be cleared', async () => {
+      const id = paymentMethodIds[0];
+      const logoUrl = 'https://cdn.example.com/logos/instapay.png';
+      await request(app.getHttpServer())
+        .patch(`/api/v1/admin/payment-methods/${id}`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ logoUrl })
+        .expect(200);
+
+      const listed = await request(app.getHttpServer()).get('/api/v1/payment-methods').expect(200);
+      expect(listed.body.find((m: { id: string }) => m.id === id).logoUrl).toBe(logoUrl);
+      const site = await request(app.getHttpServer()).get('/api/v1/store/site').expect(200);
+      expect(site.body.paymentMethods.find((m: { id: string }) => m.id === id).logoUrl).toBe(logoUrl);
+
+      await request(app.getHttpServer())
+        .patch(`/api/v1/admin/payment-methods/${id}`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ logoUrl: null })
+        .expect(200);
+      expect((await prisma.paymentMethod.findUnique({ where: { id } }))?.logoUrl).toBeNull();
+    });
   });
 
   describe('payment proof upload', () => {

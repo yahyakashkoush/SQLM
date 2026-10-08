@@ -49,7 +49,7 @@ export class StoreController {
       this.prisma.paymentMethod.findMany({
         where: { enabled: true },
         orderBy: { displayOrder: 'asc' },
-        select: { id: true, name: true, description: true, provider: true, currency: true, cryptoAsset: true },
+        select: { id: true, name: true, description: true, provider: true, currency: true, cryptoAsset: true, logoUrl: true },
       }),
       this.prisma.category.findMany({
         where: { status: 'ACTIVE', products: { some: { status: 'ACTIVE', visibility: 'VISIBLE' } } },
@@ -87,6 +87,7 @@ export class StoreController {
         id: m.id,
         name: m.name,
         description: m.description,
+        logoUrl: m.logoUrl,
         kind: m.provider === 'MANUAL' ? 'manual' : 'crypto',
         currency: m.provider === 'MANUAL' ? m.currency : (m.cryptoAsset ?? 'USDT'),
       })),

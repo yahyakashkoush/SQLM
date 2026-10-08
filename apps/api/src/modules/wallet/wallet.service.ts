@@ -140,6 +140,7 @@ export class WalletService {
         accountNumber: true,
         instructions: true,
         qrCodeUrl: true,
+        logoUrl: true,
         currency: true,
         provider: true,
       },
