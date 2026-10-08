@@ -1,5 +1,5 @@
 import Link from 'next/link';
-import { Wordmark } from './site-header';
+import { Logo } from './site-header';
 
 export function SiteFooter({ botUrl, supportContact }: { botUrl: string; supportContact: string }) {
   const handle = supportContact.startsWith('@') ? supportContact.slice(1) : null;
@@ -7,7 +7,7 @@ export function SiteFooter({ botUrl, supportContact }: { botUrl: string; support
     <footer className="border-t border-line bg-paper">
       <div className="site-container grid gap-10 py-12 sm:grid-cols-[1.4fr,1fr,1fr]">
         <div className="space-y-3">
-          <Wordmark />
+          <Logo />
           <p className="max-w-xs text-sm leading-7 text-ink-soft">
             اشتراكات وأدوات رقمية أصلية، بالكامل من خلال تيليجرام.
           </p>

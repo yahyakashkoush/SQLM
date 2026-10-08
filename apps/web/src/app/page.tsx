@@ -3,7 +3,7 @@ import { Coins, MessageCircleQuestion, Send, ShieldCheck, Timer, Wallet } from '
 import { getSite } from '@/lib/api';
 import { SiteHeader } from '@/components/site-header';
 import { SiteFooter } from '@/components/site-footer';
-import { ChatMock } from '@/components/chat-mock';
+import { HeroRobot } from '@/components/hero-robot';
 import { ProductCatalog } from '@/components/product-catalog';
 
 export const dynamic = 'force-dynamic';
@@ -77,7 +77,7 @@ export default async function HomePage() {
               </li>
             </ul>
           </div>
-          <ChatMock deliveryTime={site.deliveryTime} />
+          <HeroRobot />
         </section>
 
         {/* Products */}
