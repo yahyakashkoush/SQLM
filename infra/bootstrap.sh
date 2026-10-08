@@ -3,6 +3,11 @@
 #
 #   curl -fsSL https://raw.githubusercontent.com/yahyakashkoush/SQLM/claude/gifted-pasteur-kpxp3n/infra/bootstrap.sh | bash
 #
+# Bot admins (Telegram user ids that get the admin panel in the bot) can be
+# set on any run and are saved into .env:
+#
+#   curl -fsSL .../bootstrap.sh | SQLM_ADMIN_IDS=8205727900 bash
+#
 # Safe to re-run: an existing .env and database are kept, the code is
 # updated and the stack rebuilt. Secrets are generated on the server or typed
 # here; none of them ever touch the repository.
@@ -133,6 +138,21 @@ EOF
   umask 022
   echo "Saved $ENV_FILE (readable by you only)."
   echo "IMPORTANT: back this file up somewhere safe — INVENTORY_ENCRYPTION_KEY decrypts your stock codes."
+fi
+
+# Bot admins: SQLM_ADMIN_IDS on the command line replaces the saved list.
+if [ -n "${SQLM_ADMIN_IDS:-}" ]; then
+  ADMIN_IDS=$(printf '%s' "$SQLM_ADMIN_IDS" | tr -d ' ')
+  if [[ "$ADMIN_IDS" =~ ^[0-9]+(,[0-9]+)*$ ]]; then
+    if grep -q '^TELEGRAM_ADMIN_IDS=' "$ENV_FILE"; then
+      sed -i "s/^TELEGRAM_ADMIN_IDS=.*/TELEGRAM_ADMIN_IDS=$ADMIN_IDS/" "$ENV_FILE"
+    else
+      printf '\nTELEGRAM_ADMIN_IDS=%s\n' "$ADMIN_IDS" >>"$ENV_FILE"
+    fi
+    say "Bot admins set: $ADMIN_IDS"
+  else
+    warn "SQLM_ADMIN_IDS must be Telegram ids separated by commas — ignored."
+  fi
 fi
 
 # --- 4. Build and start -------------------------------------------------------
