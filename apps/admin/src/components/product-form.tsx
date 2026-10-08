@@ -1,11 +1,12 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { Plus, Star, Trash2 } from 'lucide-react';
 import { Button, Input } from '@sqlm/ui';
 import { api, ApiError, type AdminProduct } from '@/lib/api';
 import { Checkbox, Field, Section, Select, Textarea } from './form';
+import { BundleFields, BundleManager, bundleProblem, emptyBundle, toInput, type BundleDraft } from './bundle-manager';
 import { ImageUploader } from './image-uploader';
 
 export const DELIVERY_TYPE_LABELS: Record<string, string> = {
@@ -64,25 +65,6 @@ interface FormState {
   reviewCount: string;
 }
 
-interface BundleRow {
-  id?: string;
-  label: string;
-  quantity: string;
-  price: string;
-  wholesaleOnly: boolean;
-  active: boolean;
-}
-
-const toBundleRows = (p: Partial<AdminProduct> | null): BundleRow[] =>
-  (p?.bundles ?? []).map((b) => ({
-    id: b.id,
-    label: b.label ?? '',
-    quantity: String(b.quantity),
-    price: String(b.price),
-    wholesaleOnly: b.wholesaleOnly,
-    active: b.active,
-  }));
-
 function toForm(p: Partial<AdminProduct> | null, defaultCurrency: string): FormState {
   return {
     name: p?.name ?? '',
@@ -138,23 +120,9 @@ export function ProductForm({
 
   const { data: categories } = useQuery({ queryKey: ['categories'], queryFn: () => api.categories() });
 
-  // Bundles live on the product detail, not the list row the form may have
-  // been opened from; until they load, saving leaves them untouched.
-  const [bundles, setBundles] = useState<BundleRow[]>(() => toBundleRows(product));
-  const [bundlesReady, setBundlesReady] = useState(!isEdit || product?.bundles !== undefined);
-  const { data: detail } = useQuery({
-    queryKey: ['product', product?.id],
-    queryFn: () => api.product(product!.id!),
-    enabled: isEdit && product?.bundles === undefined,
-  });
-  useEffect(() => {
-    if (detail && !bundlesReady) {
-      setBundles(toBundleRows(detail));
-      setBundlesReady(true);
-    }
-  }, [detail, bundlesReady]);
-  const setBundle = (i: number, patch: Partial<BundleRow>) =>
-    setBundles((rows) => rows.map((row, j) => (j === i ? { ...row, ...patch } : row)));
+  // A new product's bundles go out with it. A saved product's bundles are
+  // managed one by one by <BundleManager>, never through this form's save.
+  const [draftBundles, setDraftBundles] = useState<BundleDraft[]>([]);
   const { data: templates } = useQuery({ queryKey: ['delivery-templates'], queryFn: () => api.deliveryTemplates() });
 
   const save = useMutation({
@@ -193,16 +161,7 @@ export function ProductForm({
         ratingScore: form.ratingScore.trim() ? Number(form.ratingScore) : null,
         reviewCount: form.reviewCount.trim() ? Number(form.reviewCount) : 0,
       };
-      if (bundlesReady) {
-        payload.bundles = bundles.map((b) => ({
-          ...(b.id ? { id: b.id } : {}),
-          label: b.label.trim() || null,
-          quantity: Number(b.quantity),
-          price: Number(b.price),
-          wholesaleOnly: b.wholesaleOnly,
-          active: b.active,
-        }));
-      }
+      if (!isEdit && draftBundles.length > 0) payload.bundles = draftBundles.map(toInput);
       if (form.slug.trim()) payload.slug = form.slug.trim().toLowerCase();
       return (isEdit ? api.updateProduct(product!.id!, payload) : api.createProduct(payload)) as Promise<{
         notified?: number;
@@ -212,9 +171,7 @@ export function ProductForm({
     onError: (err) => setError(err instanceof ApiError ? err.message : 'Save failed'),
   });
 
-  const badBundle = bundles.find(
-    (b) => !(Number(b.quantity) >= 2) || !Number.isInteger(Number(b.quantity)) || !(Number(b.price) > 0),
-  );
+  const badBundle = isEdit ? undefined : draftBundles.find((b) => bundleProblem(b));
   const rating = form.ratingScore.trim() ? Number(form.ratingScore) : null;
   const validationError = !form.name.trim()
     ? 'Name is required'
@@ -225,7 +182,11 @@ export function ProductForm({
         : badBundle
           ? 'Each bundle needs a quantity of 2 or more and a price'
           : null;
-  const unitPrice = Number(form.price) || 0;
+  const pricing = {
+    currency: form.currency,
+    unitPrice: Number(form.price) || 0,
+    costPrice: form.costPrice.trim() ? Number(form.costPrice) : null,
+  };
 
   const willAutoDeliver =
     form.inventoryMode === 'INDIVIDUAL' && form.deliveryType !== 'MANUAL' && form.deliveryType !== 'CUSTOM';
@@ -298,85 +259,46 @@ export function ProductForm({
 
       <Section
         title="Bundles"
-        description="Sell several units together for less — e.g. 5 accounts for the price of 4. Wholesale bundles are only offered to approved wholesale members."
+        description={
+          isEdit
+            ? 'Each bundle saves on its own — changes here do not wait for the Save button below. Wholesale prices are only shown to approved merchants.'
+            : 'Sell several units together for less — e.g. 5 accounts for the price of 4. Wholesale prices are only shown to approved merchants.'
+        }
       >
-        {!bundlesReady ? (
-          <p className="text-sm text-muted-foreground">Loading bundles…</p>
+        {isEdit ? (
+          <BundleManager productId={product!.id!} pricing={pricing} />
         ) : (
           <div className="space-y-3">
-            {bundles.length === 0 && <p className="text-sm text-muted-foreground">No bundles — sold one unit at a time.</p>}
-            {bundles.map((b, i) => {
-              const qty = Number(b.quantity);
-              const price = Number(b.price);
-              const saving = qty >= 2 && price > 0 && unitPrice > 0 ? 1 - price / (unitPrice * qty) : null;
-              return (
-                <div key={b.id ?? `new-${i}`} className="rounded-lg border p-3">
-                  <div className="grid gap-3 sm:grid-cols-[1fr,7rem,8rem]">
-                    <Field label="Label" htmlFor={`b-label-${i}`} hint="Shown to the customer.">
-                      <Input
-                        id={`b-label-${i}`}
-                        dir="auto"
-                        value={b.label}
-                        placeholder={`باقة ${b.quantity || 'N'}`}
-                        onChange={(e) => setBundle(i, { label: e.target.value })}
-                      />
-                    </Field>
-                    <Field label="Units" htmlFor={`b-qty-${i}`}>
-                      <Input
-                        id={`b-qty-${i}`}
-                        type="number"
-                        min="2"
-                        inputMode="numeric"
-                        value={b.quantity}
-                        onChange={(e) => setBundle(i, { quantity: e.target.value })}
-                      />
-                    </Field>
-                    <Field label={`Price (${form.currency})`} htmlFor={`b-price-${i}`} hint="For the whole bundle.">
-                      <Input
-                        id={`b-price-${i}`}
-                        type="number"
-                        min="0"
-                        step="0.01"
-                        inputMode="decimal"
-                        value={b.price}
-                        onChange={(e) => setBundle(i, { price: e.target.value })}
-                      />
-                    </Field>
-                  </div>
-                  <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-2 text-sm">
-                    <Checkbox label="Wholesale members only" checked={b.wholesaleOnly} onChange={(v) => setBundle(i, { wholesaleOnly: v })} />
-                    <Checkbox label="Active" checked={b.active} onChange={(v) => setBundle(i, { active: v })} />
-                    {saving !== null && (
-                      <span className={`text-xs ${saving > 0 ? 'text-success' : 'text-destructive'}`}>
-                        {saving > 0
-                          ? `${Math.round(saving * 100)}% off ${qty} singles · ${(price / qty).toFixed(2)} each`
-                          : 'Costs more than buying singles'}
-                      </span>
-                    )}
-                    <button
-                      type="button"
-                      onClick={() => setBundles((rows) => rows.filter((_, j) => j !== i))}
-                      className="ml-auto inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs text-destructive hover:bg-destructive/10"
-                    >
-                      <Trash2 className="h-3.5 w-3.5" /> Remove
-                    </button>
-                  </div>
+            {draftBundles.length === 0 && (
+              <p className="text-sm text-muted-foreground">No bundles — sold one unit at a time. They are saved with the product.</p>
+            )}
+            {draftBundles.map((b, i) => (
+              <div key={i} className="rounded-lg border p-3">
+                <BundleFields
+                  draft={b}
+                  pricing={pricing}
+                  idPrefix={`draft-${i}`}
+                  onChange={(next) => setDraftBundles((rows) => rows.map((row, j) => (j === i ? next : row)))}
+                />
+                <div className="mt-2 flex">
+                  <button
+                    type="button"
+                    onClick={() => setDraftBundles((rows) => rows.filter((_, j) => j !== i))}
+                    className="ml-auto inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs text-destructive hover:bg-destructive/10"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" /> Remove
+                  </button>
                 </div>
-              );
-            })}
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={() =>
-                setBundles((rows) => [
-                  ...rows,
-                  { label: '', quantity: '5', price: '', wholesaleOnly: false, active: true },
-                ])
-              }
-            >
-              <Plus className="mr-1 h-4 w-4" /> Add bundle
-            </Button>
+              </div>
+            ))}
+            <div className="flex flex-wrap gap-2">
+              <Button type="button" variant="outline" size="sm" onClick={() => setDraftBundles((r) => [...r, emptyBundle(false)])}>
+                <Plus className="mr-1 h-4 w-4" /> Retail bundle
+              </Button>
+              <Button type="button" variant="outline" size="sm" onClick={() => setDraftBundles((r) => [...r, emptyBundle(true)])}>
+                <Plus className="mr-1 h-4 w-4" /> Wholesale price
+              </Button>
+            </div>
           </div>
         )}
       </Section>

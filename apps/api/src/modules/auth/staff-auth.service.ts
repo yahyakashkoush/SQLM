@@ -1,5 +1,7 @@
 import { randomBytes, createHash } from 'node:crypto';
-import { BadRequestException, Injectable, Logger, UnauthorizedException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Injectable, Logger, UnauthorizedException } from '@nestjs/common';
+import { verifyTelegramInitData, TelegramInitDataError } from '@sqlm/shared/crypto';
+import { StaffIdentityService } from '../staff-identity/staff-identity.service';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import * as argon2 from 'argon2';
@@ -34,7 +36,40 @@ export class StaffAuthService {
     private readonly jwt: JwtService,
     private readonly config: ConfigService,
     private readonly totp: TotpService,
+    private readonly identity: StaffIdentityService,
   ) {}
+
+  /**
+   * Sign-in for the Mini App's admin mode. The Telegram session must be
+   * signed by our bot and under an hour old, and the account must be one
+   * the bot already treats as staff (linked from the dashboard, or in
+   * TELEGRAM_ADMIN_IDS). The tokens carry the same role and permissions as
+   * a dashboard login, so every admin endpoint applies its usual guards.
+   */
+  async loginWithTelegram(initData: string): Promise<StaffTokenPair> {
+    const botToken = this.config.get<string>('TELEGRAM_BOT_TOKEN');
+    if (!botToken) throw new UnauthorizedException('Telegram authentication is not configured');
+    let telegramUserId: number;
+    try {
+      telegramUserId = verifyTelegramInitData(initData, botToken, 3600).user.id;
+    } catch (err) {
+      if (err instanceof TelegramInitDataError) throw new UnauthorizedException(`Invalid Telegram session: ${err.message}`);
+      throw err;
+    }
+    const staff = await this.identity.resolve(telegramUserId);
+    if (!staff) throw new ForbiddenException({ code: 'NOT_STAFF', message: 'This Telegram account is not linked to a staff member' });
+    await this.prisma.staff.update({ where: { id: staff.id }, data: { lastLoginAt: new Date() } });
+    await this.prisma.auditLog.create({
+      data: {
+        actorStaffId: staff.id,
+        action: 'staff.login_telegram',
+        entityType: 'staff',
+        entityId: staff.id,
+        changes: { telegramUserId: String(telegramUserId) },
+      },
+    });
+    return this.issueTokenPair(staff.id, staff.email, staff.name, staff.role);
+  }
 
   async login(dto: StaffLoginDto): Promise<StaffTokenPair | StaffPartialToken> {
     const staff = await this.prisma.staff.findUnique({ where: { email: dto.email } });

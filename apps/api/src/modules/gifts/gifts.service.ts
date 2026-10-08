@@ -94,6 +94,8 @@ export class GiftsService {
           fulfillmentTypeSnapshot: product.fulfillmentType,
           unitPrice: 0,
           quantity: 1,
+          // A gift still costs the store: counted against profit.
+          unitCost: product.costPrice,
         },
       });
 
@@ -257,6 +259,8 @@ export class GiftsService {
           fulfillmentTypeSnapshot: product.fulfillmentType,
           unitPrice: 0,
           quantity: 1,
+          // A gift still costs the store: counted against profit.
+          unitCost: product.costPrice,
         },
       });
 

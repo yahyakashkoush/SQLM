@@ -1,12 +1,13 @@
 'use client';
 
 import Link from 'next/link';
-import { ChevronLeft, FileText, LifeBuoy, Package, ShoppingCart, Store, User } from 'lucide-react';
+import { ChevronLeft, FileText, Gift, LifeBuoy, Package, ShieldCheck, ShoppingCart, Store, User, Wallet } from 'lucide-react';
 import { Card, CardContent } from '@sqlm/ui';
 import { useAuthStore } from '@/store/auth-store';
 import { useTelegram } from '@/components/providers/telegram-provider';
 import { useProfile, useStoreInfo } from '@/lib/queries';
 import { PerksBanner } from '@/components/account/perks-banner';
+import { formatMoney } from '@/lib/format';
 
 export default function AccountPage() {
   const customer = useAuthStore((s) => s.customer);
@@ -15,9 +16,12 @@ export default function AccountPage() {
   const { data: profile } = useProfile();
 
   const links = [
+    ...(profile?.staff ? [{ href: '/admin', label: 'لوحة التحكم', icon: ShieldCheck }] : []),
+    ...(profile?.wallet ? [{ href: '/wallet', label: 'المحفظة والرصيد', icon: Wallet }] : []),
     { href: '/orders', label: 'طلباتي', icon: Package },
     { href: '/cart', label: 'السلة', icon: ShoppingCart },
     { href: '/wholesale', label: profile?.wholesale ? 'أسعار الجملة' : 'عضوية تجار الجملة', icon: Store },
+    ...(profile?.staff || profile?.wallet ? [{ href: '/gifts', label: 'الهدايا', icon: Gift }] : []),
     { href: '/support', label: 'الدعم الفني', icon: LifeBuoy },
     { href: '/terms', label: 'الشروط والأحكام', icon: FileText },
   ];
@@ -41,6 +45,7 @@ export default function AccountPage() {
                 </p>
               )}
               {profile?.wholesale && <p className="text-xs font-medium text-primary">🏪 تاجر جملة</p>}
+              {profile?.staff && <p className="text-xs font-medium text-primary">🛠️ فريق الإدارة · {profile.staff.name}</p>}
             </div>
           </CardContent>
         </Card>
@@ -48,6 +53,21 @@ export default function AccountPage() {
         <p className="text-sm text-muted-foreground">
           {!inTelegram ? 'افتح التطبيق من جوه تيليجرام علشان تسجل دخول.' : (authError ?? 'جاري تسجيل الدخول…')}
         </p>
+      )}
+
+      {profile?.wallet && (
+        <Link href="/wallet">
+          <Card className="border-primary/30 bg-primary/5">
+            <CardContent className="flex items-center justify-between p-4">
+              <span className="flex items-center gap-2 text-sm font-medium">
+                <Wallet className="h-5 w-5 text-primary" /> رصيدك
+              </span>
+              <span className="text-lg font-bold tabular-nums" dir="ltr">
+                {formatMoney(profile.wallet.balance, profile.wallet.currency)}
+              </span>
+            </CardContent>
+          </Card>
+        </Link>
       )}
 
       {customer && <PerksBanner />}

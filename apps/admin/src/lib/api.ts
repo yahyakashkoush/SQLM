@@ -88,6 +88,13 @@ export const api = {
   product: (id: string) => get<AdminProduct>(`/admin/products/${id}`),
   createProduct: (body: unknown) => post<AdminProduct>('/admin/products', body),
   updateProduct: (id: string, body: unknown) => patch<AdminProduct>(`/admin/products/${id}`, body),
+  productBundles: (id: string) => get<SavedBundle[]>(`/admin/products/${id}/bundles`),
+  addBundle: (id: string, body: BundleInput) =>
+    post<{ bundle: SavedBundle; bundles: SavedBundle[] }>(`/admin/products/${id}/bundles`, body),
+  updateBundle: (id: string, bundleId: string, body: Partial<BundleInput>) =>
+    patch<{ bundle: SavedBundle; bundles: SavedBundle[] }>(`/admin/products/${id}/bundles/${bundleId}`, body),
+  deleteBundle: (id: string, bundleId: string) =>
+    del<{ bundles: SavedBundle[] }>(`/admin/products/${id}/bundles/${bundleId}`),
   deleteProduct: (id: string) => del(`/admin/products/${id}`),
   /** Gone for good with its stock; refused (409) while any order references it. */
   deleteProductPermanently: (id: string) =>
@@ -162,6 +169,7 @@ export const api = {
   deactivateCoupon: (id: string) => del(`/admin/coupons/${id}`),
 
   revenue: (days: number) => get<RevenueReport>(`/admin/revenue?days=${days}`),
+  profits: (from: string, to: string) => get<ProfitReport>(`/admin/profits?from=${from}&to=${to}`),
   deletePaymentMethod: (id: string) => del(`/admin/payment-methods/${id}`),
 
   paymentProofs: () => get<PaymentProof[]>('/admin/payment-proofs'),
@@ -209,6 +217,13 @@ export const api = {
   reviewAppeal: (id: string, accept: boolean, response?: string) =>
     post(`/admin/appeals/${id}/review`, { accept, response }),
 
+  walletTopUps: (status?: string) => get<WalletTopUp[]>(`/admin/wallet/topups${status ? `?status=${status}` : ''}`),
+  walletTopUpProof: (id: string) => get<{ url: string; mimeType: string }>(`/admin/wallet/topups/${id}/proof`),
+  reviewTopUp: (id: string, body: { approve: boolean; reason?: string; amount?: number }) =>
+    post<{ id: string; status: string; balance: string | null }>(`/admin/wallet/topups/${id}/review`, body),
+  customerWallet: (customerId: string) => get<CustomerWallet>(`/admin/wallet/customers/${customerId}`),
+  adjustWallet: (customerId: string, body: { amount: number; type: 'ADJUSTMENT' | 'REFUND'; note: string; orderId?: string }) =>
+    post<{ balance: string }>(`/admin/wallet/customers/${customerId}/adjust`, body),
   wholesaleApplications: (status?: string) =>
     get<WholesaleApplication[]>(`/admin/wholesale${status ? `?status=${status}` : ''}`),
   reviewWholesale: (id: string, approve: boolean, note?: string) =>
@@ -298,6 +313,91 @@ export interface ProductBundle {
   label: string | null;
   quantity: number;
   price: string | number;
+  wholesaleOnly: boolean;
+  active: boolean;
+}
+
+export interface ProfitFigures {
+  revenue: string;
+  cost: string;
+  profit: string;
+  margin: number | null;
+  orders: number;
+  units: number;
+}
+
+export interface ProfitReport {
+  currency: string;
+  from: string;
+  to: string;
+  totals: ProfitFigures & {
+    averageOrder: string;
+    refunds: { count: number; amount: string };
+    costCoverage: number;
+    otherCurrencyOrders: number;
+    walletLiability: string;
+  };
+  daily: Array<ProfitFigures & { date: string }>;
+  products: Array<ProfitFigures & { id: string; name: string }>;
+  customers: Array<ProfitFigures & { id: string; name: string; merchant: boolean }>;
+  channels: Array<ProfitFigures & { name: string }>;
+}
+
+export interface WalletTopUp {
+  id: string;
+  amount: string;
+  currency: string;
+  payAmount: string | null;
+  payCurrency: string | null;
+  senderReference: string | null;
+  status: 'PENDING' | 'APPROVED' | 'REJECTED';
+  rejectReason: string | null;
+  createdAt: string;
+  reviewedAt: string | null;
+  customer: {
+    id: string;
+    firstName: string | null;
+    fullName: string | null;
+    telegramUsername: string | null;
+    contactPhone: string | null;
+    walletBalance: string;
+  };
+  paymentMethod: { id: string; name: string } | null;
+  reviewedBy: { id: string; name: string } | null;
+}
+
+export interface WalletEntry {
+  id: string;
+  type: 'TOPUP' | 'PURCHASE' | 'REFUND' | 'ADJUSTMENT';
+  amount: string;
+  balanceAfter: string;
+  currency: string;
+  note: string | null;
+  createdAt: string;
+  order: { id: string; sequenceNumber: number } | null;
+  staff: { id: string; name: string } | null;
+}
+
+export interface CustomerWallet {
+  balance: string;
+  currency: string;
+  member: boolean;
+  entries: WalletEntry[];
+}
+
+export interface BundleInput {
+  label: string | null;
+  quantity: number;
+  price: number;
+  wholesaleOnly: boolean;
+  active: boolean;
+}
+
+export interface SavedBundle {
+  id: string;
+  label: string | null;
+  quantity: number;
+  price: string;
   wholesaleOnly: boolean;
   active: boolean;
 }
@@ -397,6 +497,7 @@ export interface AdminOrder {
   id: string;
   sequenceNumber: number;
   status: string;
+  walletPaid?: boolean;
   currency: string;
   total: string;
   customerId: string;

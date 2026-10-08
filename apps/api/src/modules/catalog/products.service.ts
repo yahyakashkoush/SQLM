@@ -5,6 +5,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { slugify, uniqueSlug } from '../../common/utils/slug';
 import type { CreateProductDto, ProductBundleDto } from './dto/create-product.dto';
 import type { UpdateProductDto } from './dto/update-product.dto';
+import type { CreateBundleDto, UpdateBundleDto } from './dto/bundle.dto';
 import type { AdminProductQueryDto, ProductQueryDto } from './dto/product-query.dto';
 
 export type PublicProduct = Product & { availableStock: number };
@@ -159,6 +160,80 @@ export class ProductsService {
       if (bundles) await this.syncBundles(tx, id, bundles);
       return product;
     });
+  }
+
+  /** Every bundle on the product, wholesale and inactive ones included. */
+  listBundles(productId: string) {
+    return this.prisma.productBundle.findMany({
+      where: { productId },
+      orderBy: [{ wholesaleOnly: 'asc' }, { sortOrder: 'asc' }, { quantity: 'asc' }],
+    });
+  }
+
+  /**
+   * Bundles are edited one at a time and each call answers with the fresh
+   * list, so a screen holding an old copy can never wipe out bundles it
+   * did not know about.
+   */
+  async addBundle(productId: string, dto: CreateBundleDto) {
+    await this.findByIdAdmin(productId);
+    const wholesaleOnly = dto.wholesaleOnly ?? false;
+    await this.assertBundleUnique(productId, dto.quantity, wholesaleOnly);
+    const last = await this.prisma.productBundle.aggregate({ where: { productId }, _max: { sortOrder: true } });
+    const bundle = await this.prisma.productBundle.create({
+      data: {
+        productId,
+        label: dto.label?.trim() || null,
+        quantity: dto.quantity,
+        price: dto.price,
+        wholesaleOnly,
+        active: dto.active ?? true,
+        sortOrder: (last._max.sortOrder ?? -1) + 1,
+      },
+    });
+    return { bundle, bundles: await this.listBundles(productId) };
+  }
+
+  async updateBundle(productId: string, bundleId: string, dto: UpdateBundleDto) {
+    const current = await this.prisma.productBundle.findFirst({ where: { id: bundleId, productId } });
+    if (!current) throw new NotFoundException('Bundle not found on this product');
+    const quantity = dto.quantity ?? current.quantity;
+    const wholesaleOnly = dto.wholesaleOnly ?? current.wholesaleOnly;
+    if (quantity !== current.quantity || wholesaleOnly !== current.wholesaleOnly) {
+      await this.assertBundleUnique(productId, quantity, wholesaleOnly, bundleId);
+    }
+    const bundle = await this.prisma.productBundle.update({
+      where: { id: bundleId },
+      data: {
+        ...(dto.label !== undefined ? { label: dto.label?.trim() || null } : {}),
+        quantity,
+        wholesaleOnly,
+        ...(dto.price !== undefined ? { price: dto.price } : {}),
+        ...(dto.active !== undefined ? { active: dto.active } : {}),
+      },
+    });
+    return { bundle, bundles: await this.listBundles(productId) };
+  }
+
+  /** Order lines keep their own label and price, so history is untouched. */
+  async deleteBundle(productId: string, bundleId: string) {
+    const { count } = await this.prisma.productBundle.deleteMany({ where: { id: bundleId, productId } });
+    if (count === 0) throw new NotFoundException('Bundle not found on this product');
+    return { bundles: await this.listBundles(productId) };
+  }
+
+  /** Two "5 for X" options side by side would only confuse buyers. */
+  private async assertBundleUnique(productId: string, quantity: number, wholesaleOnly: boolean, exceptId?: string) {
+    const clash = await this.prisma.productBundle.findFirst({
+      where: { productId, quantity, wholesaleOnly, ...(exceptId ? { id: { not: exceptId } } : {}) },
+      select: { id: true },
+    });
+    if (clash) {
+      throw new ConflictException({
+        message: `There is already a ${wholesaleOnly ? 'wholesale' : 'retail'} bundle of ${quantity} on this product`,
+        code: 'BUNDLE_EXISTS',
+      });
+    }
   }
 
   /**

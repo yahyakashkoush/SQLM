@@ -16,6 +16,7 @@ import { StaffNotifier } from './staff-notifier.service';
 import { BotGuardService } from './bot-guard.service';
 import { BotAdminPanelService } from './bot-admin-panel.service';
 import { WholesaleModule } from '../wholesale/wholesale.module';
+import { WalletModule } from '../wallet/wallet.module';
 import { QUEUE_NAMES } from '../queue/queue-names';
 
 /** Global so the notifications worker can push outbound messages (to
@@ -32,6 +33,7 @@ import { QUEUE_NAMES } from '../queue/queue-names';
     LoyaltyModule,
     GiftsModule,
     WholesaleModule,
+    WalletModule,
   ],
   controllers: [TelegramWebhookController, AdminBotController],
   providers: [

@@ -35,7 +35,13 @@ export type NotificationKind =
   | 'appeal.created'
   | 'appeal.reviewed'
   | 'wholesale.applied'
-  | 'wholesale.reviewed';
+  | 'wholesale.reviewed'
+  /** Staff: a merchant asked to top up their wallet. */
+  | 'wallet.topup_requested'
+  /** Customer: their top-up was approved or rejected. */
+  | 'wallet.topup_reviewed'
+  /** Customer: staff credited or debited their wallet by hand. */
+  | 'wallet.adjusted';
 
 export interface NotificationPayload {
   kind: NotificationKind;

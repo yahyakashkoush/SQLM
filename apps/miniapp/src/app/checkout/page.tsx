@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import Link from 'next/link';
-import { CheckCircle2, Circle, Gift, Loader2, Star, TicketPercent, UserRound, X } from 'lucide-react';
+import { CheckCircle2, Circle, Gift, Loader2, Star, TicketPercent, UserRound, Wallet, X } from 'lucide-react';
 import { Button, Card, CardContent, Input, Label, Separator } from '@sqlm/ui';
 import { usePaymentMethods, useProfile, useStoreInfo } from '@/lib/queries';
 import { cartLines, cartSubtotal, useCartStore } from '@/store/cart-store';
@@ -12,6 +12,9 @@ import { useAuthStore } from '@/store/auth-store';
 import { api, ApiError } from '@/lib/api';
 import { MEMBER_DISCOUNT_LABELS } from '@/types/api';
 import { formatMoney } from '@/lib/format';
+
+/** The wallet is not a payment method row; it gets its own sentinel in the picker. */
+const WALLET = '__wallet__';
 
 export default function CheckoutPage() {
   const router = useRouter();
@@ -74,9 +77,15 @@ export default function CheckoutPage() {
   const total = priced ? Number(priced.total) : subtotal;
   // Every enabled method is offered; the admin decides which ones exist.
   const methods = paymentMethods.data ?? [];
+  // Merchants can pay from the wallet when it is in the order's currency.
+  const wallet = profile?.wallet && profile.wallet.currency === currency ? profile.wallet : null;
+  const walletCovers = wallet !== null && Number(wallet.balance) >= total;
+  // Until the buyer picks, a merchant who can afford it pays from the balance.
+  const chosenMethod = selectedMethod ?? (walletCovers ? WALLET : null);
+  const payingFromWallet = chosenMethod === WALLET && walletCovers;
   const optionFor = (methodId: string) =>
     priced?.paymentOptions.find((o) => o.paymentMethodId === methodId);
-  const selectedOption = selectedMethod ? optionFor(selectedMethod) : undefined;
+  const selectedOption = chosenMethod && chosenMethod !== WALLET ? optionFor(chosenMethod) : undefined;
   const converted =
     selectedOption && selectedOption.currency !== currency ? selectedOption : undefined;
 
@@ -103,7 +112,7 @@ export default function CheckoutPage() {
   };
 
   const handlePlaceOrder = async () => {
-    if (!selectedMethod) {
+    if (!chosenMethod || (chosenMethod === WALLET && !walletCovers)) {
       setError('اختار طريقة الدفع الأول.');
       return;
     }
@@ -125,7 +134,7 @@ export default function CheckoutPage() {
       const key = ensureIdempotencyKey();
       const order = await api.checkout({
         items: lines,
-        paymentMethodId: selectedMethod,
+        ...(chosenMethod === WALLET ? { payWithWallet: true } : { paymentMethodId: chosenMethod }),
         idempotencyKey: key,
         couponCode: appliedCode ?? undefined,
         expectedTotal: Number(priced.total),
@@ -136,6 +145,7 @@ export default function CheckoutPage() {
       // The order may now be holding the welcome gift.
       void queryClient.invalidateQueries({ queryKey: ['perks'] });
       void queryClient.invalidateQueries({ queryKey: ['profile'] });
+      void queryClient.invalidateQueries({ queryKey: ['wallet'] });
       router.push(`/orders/${order.id}`);
     } catch (err) {
       if (err instanceof ApiError && err.code === 'PRICE_CHANGED') {
@@ -309,8 +319,41 @@ export default function CheckoutPage() {
             لا توجد طرق دفع متاحة حالياً، تواصل مع الدعم.
           </p>
         ) : (
-          methods.map((method) => {
-            const selected = selectedMethod === method.id;
+          <>
+          {wallet && (
+            <button
+              type="button"
+              disabled={!walletCovers}
+              onClick={() => setSelectedMethod(WALLET)}
+              className={`flex items-start gap-3 rounded-lg border p-3 text-start text-sm transition disabled:opacity-60 ${
+                payingFromWallet ? 'border-primary bg-primary/5' : 'border-input'
+              }`}
+            >
+              {payingFromWallet ? (
+                <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
+              ) : (
+                <Wallet className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
+              )}
+              <span className="flex-1">
+                <span className="block font-medium">رصيد المحفظة</span>
+                <span className="block text-xs text-muted-foreground">
+                  {walletCovers
+                    ? 'بيتدفع ويتأكد فوراً — من غير إيصال.'
+                    : 'رصيدك مش كفاية للطلب ده.'}
+                </span>
+              </span>
+              <span className="shrink-0 text-end text-xs">
+                <span className="block font-semibold tabular-nums">{formatMoney(wallet.balance, wallet.currency)}</span>
+                {!walletCovers && (
+                  <Link href="/wallet" className="text-primary underline" onClick={(e) => e.stopPropagation()}>
+                    اشحن
+                  </Link>
+                )}
+              </span>
+            </button>
+          )}
+          {methods.map((method) => {
+            const selected = chosenMethod === method.id;
             const option = optionFor(method.id);
             const inOtherCurrency = option && option.currency !== currency;
             return (
@@ -342,7 +385,8 @@ export default function CheckoutPage() {
                 )}
               </button>
             );
-          })
+          })}
+          </>
         )}
         <p className="text-xs text-muted-foreground">
           بعد تأكيد الطلب هتظهر لك بيانات التحويل وتقدر ترفع صورة الإيصال.
@@ -368,8 +412,8 @@ export default function CheckoutPage() {
           onClick={() => void handlePlaceOrder()}
         >
           {submitting && <Loader2 className="h-4 w-4 animate-spin" />}
-          تأكيد الطلب —{' '}
-          {converted
+          {payingFromWallet ? 'ادفع من الرصيد' : 'تأكيد الطلب'} —{' '}
+          {converted && !payingFromWallet
             ? formatMoney(converted.amount, converted.currency)
             : formatMoney(total, currency)}
         </Button>

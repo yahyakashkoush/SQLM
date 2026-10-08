@@ -45,6 +45,8 @@ export const PERMISSIONS = [
   'roles.read',
   'roles.write',
   'analytics.read',
+  /** Credit or debit a customer's wallet by hand. */
+  'wallet.adjust',
   'settings.read',
   'settings.write',
   'audit_logs.read',
@@ -80,6 +82,7 @@ export const ROLE_PERMISSIONS: Record<Role, readonly Permission[]> = {
     'customers.write',
     'customers.ban',
     'analytics.read',
+    'wallet.adjust',
     'settings.read',
     'audit_logs.read',
     'system_health.read',

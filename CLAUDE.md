@@ -92,6 +92,8 @@ Each module is a domain concern with a service, controller(s), DTOs, and optiona
 | `telegram` | Bot adapter: webhook controller, grammy handlers, menus, notifications |
 | `notifications` | Outbound dispatch (Telegram, future: email) |
 | `loyalty` | Member discounts (verified, legacy/old-customer), welcome gift, perks |
+| `wallet` | Merchant prepaid balance: top-ups reviewed by staff, pay orders from balance, append-only ledger (`wallet-ledger.ts` is the only writer of `walletBalance`) |
+| `staff-identity` | Which staff member a Telegram account acts as (dashboard link or `TELEGRAM_ADMIN_IDS`) — used by the bot admin panel and the Mini App admin mode |
 | `storage` | S3-compatible (LocalStack in dev, S3/minio in prod) |
 | `queue` | BullMQ registration, base processor with retry/backoff/DLQ |
 | `redis` | ioredis client, distributed locks, idempotency cache |

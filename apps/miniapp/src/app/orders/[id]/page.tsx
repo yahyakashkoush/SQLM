@@ -18,6 +18,7 @@ import { useDeliveries, useOrder, useStoreInfo } from '@/lib/queries';
 import { OrderStatusBadge } from '@/components/orders/order-status-badge';
 import { CopyButton } from '@/components/copy-button';
 import { CryptoPaymentCard } from '@/components/orders/crypto-payment-card';
+import { WalletPayCard } from '@/components/orders/wallet-pay-card';
 import { api, ApiError } from '@/lib/api';
 import { MEMBER_DISCOUNT_LABELS } from '@/types/api';
 import { formatDate, formatMoney } from '@/lib/format';
@@ -276,8 +277,18 @@ export default function OrderDetailPage({ params }: { params: Promise<{ id: stri
         </CardContent>
       </Card>
 
+      {order.walletPaid && (
+        <Card className="border-success/40 bg-success/5">
+          <CardContent className="p-4 text-sm">
+            <p className="font-semibold">💳 اتدفع من رصيد المحفظة</p>
+            <p className="text-xs text-muted-foreground">الدفع اتأكد تلقائي — مش محتاج ترفع إيصال.</p>
+          </CardContent>
+        </Card>
+      )}
+
       {order.status === 'PENDING_PAYMENT' && (
         <>
+          <WalletPayCard order={order} onPaid={() => void refetch()} />
           {method && isCrypto && <CryptoPaymentCard orderId={order.id} methodName={method.name} />}
 
           {method && !isCrypto && (

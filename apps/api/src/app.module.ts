@@ -32,6 +32,8 @@ import { CryptoPaymentsModule } from './modules/crypto-payments/crypto-payments.
 import { SettingsModule } from './modules/settings/settings.module';
 import { GiftsModule } from './modules/gifts/gifts.module';
 import { WholesaleModule } from './modules/wholesale/wholesale.module';
+import { WalletModule } from './modules/wallet/wallet.module';
+import { StaffIdentityModule } from './modules/staff-identity/staff-identity.module';
 
 @Module({
   imports: [
@@ -87,6 +89,7 @@ import { WholesaleModule } from './modules/wholesale/wholesale.module';
       ],
     }),
     PrismaModule,
+    StaffIdentityModule,
     SettingsModule,
     RedisModule,
     QueueModule,
@@ -112,6 +115,7 @@ import { WholesaleModule } from './modules/wholesale/wholesale.module';
     CryptoPaymentsModule,
     GiftsModule,
     WholesaleModule,
+    WalletModule,
   ],
   controllers: [AppController],
   providers: [{ provide: APP_GUARD, useClass: ThrottlerGuard }],

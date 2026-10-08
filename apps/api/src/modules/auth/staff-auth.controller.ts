@@ -4,6 +4,7 @@ import { Throttle } from '@nestjs/throttler';
 import { StaffAuthService } from './staff-auth.service';
 import { StaffLoginDto } from './dto/staff-login.dto';
 import { RefreshTokenDto } from './dto/refresh-token.dto';
+import { TelegramAuthDto } from './dto/telegram-auth.dto';
 import { JwtStaffAuthGuard } from '../rbac/guards/jwt-staff-auth.guard';
 import { CurrentStaff, type AuthenticatedStaff } from '../rbac/decorators/current-staff.decorator';
 
@@ -26,6 +27,14 @@ export class StaffAuthController {
   @Throttle({ auth: {} })
   login(@Body() dto: StaffLoginDto) {
     return this.staffAuth.login(dto);
+  }
+
+  /** The Mini App's admin mode: a staff Telegram account signs in with its initData. */
+  @Post('telegram')
+  @HttpCode(HttpStatus.OK)
+  @Throttle({ auth: {} })
+  loginWithTelegram(@Body() dto: TelegramAuthDto) {
+    return this.staffAuth.loginWithTelegram(dto.initData);
   }
 
   /** Second step when login returns `requires2fa: true`. */

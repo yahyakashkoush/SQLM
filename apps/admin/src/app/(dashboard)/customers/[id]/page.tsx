@@ -8,6 +8,7 @@ import { api, ApiError } from '@/lib/api';
 import { Checkbox, Select, Textarea } from '@/components/form';
 import { PageHeader } from '@/components/layout/page-header';
 import { useAuthStore } from '@/store/auth-store';
+import { CustomerWalletCard } from '@/components/customer-wallet-card';
 
 export default function CustomerDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
@@ -225,6 +226,8 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
           {error && <p className="w-full text-xs text-destructive">{error}</p>}
         </CardContent>
       </Card>
+
+      <CustomerWalletCard customerId={id} />
 
       <div className="mb-6 grid gap-6 lg:grid-cols-2">
         {can('customers.write') && (

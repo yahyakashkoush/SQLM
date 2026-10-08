@@ -240,7 +240,12 @@ export default function OrderDetailPage({ params }: { params: Promise<{ id: stri
           <Card>
             <CardContent className="space-y-3 p-4">
               <p className="text-sm font-medium">Payment</p>
-              {order.paymentMethod ? (
+              {order.walletPaid ? (
+                <div className="rounded bg-success/10 p-2 text-sm">
+                  <p className="font-medium">💳 Paid from the merchant&apos;s wallet</p>
+                  <p className="text-xs text-muted-foreground">Settled automatically — no receipt needed.</p>
+                </div>
+              ) : order.paymentMethod ? (
                 <div className="rounded bg-muted p-2 text-sm">
                   <p className="font-medium">{order.paymentMethod.name}</p>
                   {order.paymentMethod.accountNumber && (
@@ -252,7 +257,7 @@ export default function OrderDetailPage({ params }: { params: Promise<{ id: stri
               )}
               {order.paidAt && <p className="text-xs text-muted-foreground">Paid {new Date(order.paidAt).toLocaleString()}</p>}
 
-              {order.paymentProofs.length === 0 ? (
+              {order.walletPaid ? null : order.paymentProofs.length === 0 ? (
                 <p className="text-sm text-muted-foreground">
                   {order.status === 'PENDING_PAYMENT'
                     ? 'Waiting for the customer to upload a payment proof.'

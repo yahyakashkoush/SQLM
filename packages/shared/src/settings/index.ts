@@ -436,6 +436,7 @@ export const CUSTOMER_SEGMENTS = [
   'BUYERS',
   'NON_BUYERS',
   'DORMANT',
+  'WHOLESALE',
 ] as const;
 export type CustomerSegment = (typeof CUSTOMER_SEGMENTS)[number];
 
@@ -452,4 +453,5 @@ export const CUSTOMER_SEGMENT_LABELS: Record<CustomerSegment, { label: string; d
     label: `Dormant (${DORMANT_AFTER_DAYS}d)`,
     description: `Bought before, but nothing paid in the last ${DORMANT_AFTER_DAYS} days.`,
   },
+  WHOLESALE: { label: 'Wholesale merchants', description: 'Approved wholesale members (تجار الجملة).' },
 };

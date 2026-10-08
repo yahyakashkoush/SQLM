@@ -25,7 +25,9 @@ import {
   Store,
   Truck,
   UserCog,
+  TrendingUp,
   Users,
+  Wallet,
   X,
 } from 'lucide-react';
 import { cn } from '@sqlm/ui';
@@ -45,8 +47,10 @@ export const NAV_SECTIONS: Array<{ title: string; items: NavItem[] }> = [
     title: 'Sales',
     items: [
       { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard, permission: 'orders.read' },
+      { href: '/profits', label: 'Profits', icon: TrendingUp, permission: 'analytics.read' },
       { href: '/orders', label: 'Orders', icon: ClipboardList, permission: 'orders.read' },
       { href: '/payment-proofs', label: 'Payment Review', icon: Receipt, permission: 'payments.proofs.read' },
+      { href: '/wallet', label: 'Wallet Top-ups', icon: Wallet, permission: 'payments.proofs.read' },
       { href: '/crypto-payments', label: 'Crypto Payments', icon: Bitcoin, permission: 'payments.proofs.read' },
       { href: '/deliveries', label: 'Deliveries', icon: Truck, permission: 'delivery.read' },
       { href: '/support', label: 'Support', icon: LifeBuoy, permission: 'support.read' },

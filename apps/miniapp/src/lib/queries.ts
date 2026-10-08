@@ -116,3 +116,13 @@ export function useWholesaleBundles(productId: string | undefined, isMember: boo
     enabled: Boolean(productId) && isMember,
   });
 }
+
+export function useWallet(enabled = true) {
+  const hasSession = useAuthStore((s) => Boolean(s.accessToken));
+  return useQuery({ queryKey: ['wallet'], queryFn: api.wallet, enabled: hasSession && enabled, staleTime: 10_000 });
+}
+
+export function useWalletTopUps(enabled = true) {
+  const hasSession = useAuthStore((s) => Boolean(s.accessToken));
+  return useQuery({ queryKey: ['wallet-topups'], queryFn: api.walletTopUps, enabled: hasSession && enabled });
+}

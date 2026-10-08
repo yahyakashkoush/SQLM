@@ -71,9 +71,11 @@ export class StaffAlertRenderer {
     switch (job.kind) {
       case 'order.created':
         return this.orderAlert(job.orderId, 'orders.read', (o) =>
-          o.paymentMethod && o.paymentMethod.provider !== 'MANUAL'
-            ? [`🛒 طلب جديد #${o.sequenceNumber}`, '⚡ دفع كريبتو — هيتأكد تلقائي أول ما التحويل يوصل.']
-            : [`🛒 طلب جديد #${o.sequenceNumber}`, '⏳ مستني إثبات الدفع.'],
+          o.walletPaid
+            ? [`🛒 طلب جديد #${o.sequenceNumber}`, '💳 اتدفع من رصيد المحفظة — اتأكد تلقائي.']
+            : o.paymentMethod && o.paymentMethod.provider !== 'MANUAL'
+              ? [`🛒 طلب جديد #${o.sequenceNumber}`, '⚡ دفع كريبتو — هيتأكد تلقائي أول ما التحويل يوصل.']
+              : [`🛒 طلب جديد #${o.sequenceNumber}`, '⏳ مستني إثبات الدفع.'],
         );
       case 'payment.submitted':
         return this.proofAlert(job.orderId);
@@ -82,8 +84,12 @@ export class StaffAlertRenderer {
         // poller settled on its own is: nobody on the team saw it happen.
         if (!job.autoSettled) return null;
         return this.orderAlert(job.orderId, 'orders.read', (o) => [
-          `💰 اتدفع تلقائي (كريبتو) — طلب #${o.sequenceNumber}`,
+          o.walletPaid
+            ? `💳 اتدفع من رصيد المحفظة — طلب #${o.sequenceNumber}`
+            : `💰 اتدفع تلقائي (كريبتو) — طلب #${o.sequenceNumber}`,
         ]);
+      case 'wallet.topup_requested':
+        return this.topUpAlert(job);
       case 'delivery.failed':
         return this.orderAlert(job.orderId, 'delivery.read', (o) =>
           typeof job.manualCount === 'number'
@@ -192,6 +198,47 @@ export class StaffAlertRenderer {
     buttons.push(...this.link('🔗 فتح الطلب', `/orders/${order.id}`));
 
     return { permission: 'payments.proofs.read', text, file, buttons };
+  }
+
+  private async topUpAlert(job: NotificationJob): Promise<StaffAlert | null> {
+    if (typeof job.topUpId !== 'string') return null;
+    const topUp = await this.prisma.walletTopUp.findUnique({
+      where: { id: job.topUpId },
+      include: { customer: true, paymentMethod: true },
+    });
+    if (!topUp) return null;
+    const pending = topUp.status === 'PENDING';
+    const paid = topUp.payAmount ? `${topUp.payAmount.toFixed(2)} ${topUp.payCurrency}` : null;
+    const text = clip(
+      [
+        `💳 طلب شحن رصيد — ${topUp.amount.toFixed(2)} ${topUp.currency}`,
+        ...(paid ? [`💵 المفروض يحوّل: ${paid}`] : []),
+        ...(topUp.paymentMethod ? [`🏦 ${topUp.paymentMethod.name}`] : []),
+        ...(topUp.senderReference ? [`📱 حوّل من: ${topUp.senderReference}`] : []),
+        `🏪 ${describeCustomer(topUp.customer)} · رصيده الحالي ${topUp.customer.walletBalance.toFixed(2)} ${topUp.currency}`,
+        pending ? '👇 راجع التحويل على كشف الحساب وقرّر:' : '✔️ الطلب ده اتراجع خلاص.',
+      ].join('\n\n'),
+    );
+    let file: StaffAlert['file'];
+    try {
+      const stored = await this.storage.read(topUp.storageKey);
+      if (stored) {
+        const extension = topUp.storageKey.split('.').pop() ?? 'jpg';
+        file = { buffer: stored.buffer, filename: `topup.${extension}`, asPhoto: topUp.mimeType.startsWith('image/') };
+      }
+    } catch (err) {
+      this.logger.warn(`Could not attach top-up receipt ${topUp.id}: ${err instanceof Error ? err.message : err}`);
+    }
+    const buttons: StaffAlertButton[][] = pending
+      ? [
+          [
+            { text: '✅ قبول وشحن', callbackData: `ad:tuA:${topUp.id}` },
+            { text: '❌ رفض', callbackData: `ad:tuR:${topUp.id}` },
+          ],
+        ]
+      : [];
+    buttons.push(...this.link('💳 طلبات الشحن', '/wallet'));
+    return { permission: 'payments.proofs.review', text, file, buttons };
   }
 
   private async orderAlert(

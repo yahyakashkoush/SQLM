@@ -24,6 +24,7 @@ import { segmentWhere } from '../customers/customer-segments';
 import { CustomerModerationService } from '../orders/customer-moderation.service';
 import { CustomerSecurityService } from '../orders/customer-security.service';
 import { AuditService } from '../audit/audit.service';
+import { ProfitReportService } from './profit-report.service';
 
 @Controller('admin')
 @UseGuards(JwtStaffAuthGuard, PermissionsGuard)
@@ -35,7 +36,15 @@ export class AdminController {
     private readonly moderation: CustomerModerationService,
     private readonly security: CustomerSecurityService,
     private readonly audit: AuditService,
+    private readonly profits: ProfitReportService,
   ) {}
+
+  /** Revenue, cost and profit for [from, to] (YYYY-MM-DD, inclusive). */
+  @Get('profits')
+  @Permissions('analytics.read')
+  profitReport(@Query('from') from?: string, @Query('to') to?: string) {
+    return this.profits.report(from, to);
+  }
 
   @Get('stats')
   @Permissions('analytics.read')

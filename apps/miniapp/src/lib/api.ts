@@ -18,6 +18,9 @@ import type {
   TicketThread,
   WholesaleStatus,
   ProductBundle,
+  TopUpMethod,
+  WalletSummary,
+  WalletTopUpRow,
 } from '@/types/api';
 
 export interface CheckoutLine {
@@ -62,6 +65,11 @@ let reauthInFlight: Promise<boolean> | null = null;
 
 export function setTelegramInitData(initData: string | null): void {
   telegramInitData = initData;
+}
+
+/** The signed Telegram session — the admin mode signs staff in with it too. */
+export function getTelegramInitData(): string | null {
+  return telegramInitData;
 }
 
 /** Shared so a page firing several requests at once re-authenticates once. */
@@ -150,7 +158,9 @@ export const api = {
     items: CheckoutLine[];
     fullName?: string;
     contactPhone?: string;
-    paymentMethodId: string;
+    /** Omitted when a merchant pays from the wallet. */
+    paymentMethodId?: string;
+    payWithWallet?: boolean;
     idempotencyKey: string;
     couponCode?: string;
     /** The total on screen; the server refuses (PRICE_CHANGED) to charge anything else. */
@@ -214,6 +224,19 @@ export const api = {
       body: JSON.stringify(payload),
     }, true),
   myRewards: () => request<SocialRewardClaim[]>('/store/gifts/social-rewards/mine', {}, true),
+
+  wallet: () => request<WalletSummary>('/wallet', {}, true),
+  walletTopUps: () => request<WalletTopUpRow[]>('/wallet/topups', {}, true),
+  topUpQuote: (amount: number) => request<TopUpMethod[]>(`/wallet/topup-quote?amount=${amount}`, {}, true),
+  createTopUp: (payload: { amount: number; paymentMethodId: string; senderReference?: string; file: File }) => {
+    const form = new FormData();
+    form.append('amount', String(payload.amount));
+    form.append('paymentMethodId', payload.paymentMethodId);
+    if (payload.senderReference?.trim()) form.append('senderReference', payload.senderReference.trim());
+    form.append('file', payload.file);
+    return request<WalletTopUpRow>('/wallet/topups', { method: 'POST', body: form }, true);
+  },
+  payOrderFromWallet: (orderId: string) => request<Order>(`/wallet/pay/${orderId}`, { method: 'POST' }, true),
 
   uploadPaymentProof: (orderId: string, file: File, senderReference?: string) => {
     const form = new FormData();

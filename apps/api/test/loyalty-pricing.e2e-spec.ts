@@ -539,6 +539,7 @@ describe('Loyalty, pricing and segments (e2e)', () => {
         'BUYERS',
         'NON_BUYERS',
         'DORMANT',
+        'WHOLESALE',
       ]);
     });
 

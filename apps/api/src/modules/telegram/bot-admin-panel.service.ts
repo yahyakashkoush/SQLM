@@ -8,6 +8,7 @@ import { NotificationDispatcher } from '../notifications/notification-dispatcher
 import { CustomerSecurityService, formatUntil, isSuspended } from '../orders/customer-security.service';
 import { CustomerModerationService } from '../orders/customer-moderation.service';
 import { WholesaleService } from '../wholesale/wholesale.service';
+import { WalletService } from '../wallet/wallet.service';
 import { StaffTelegramService } from './staff-telegram.service';
 import { StaffAlertRenderer } from './staff-alert.renderer';
 
@@ -23,7 +24,10 @@ const CB = {
   proofs: 'ad:proofs',
   appeals: 'ad:appeals',
   wholesale: 'ad:wh',
+  topUps: 'ad:tu',
   find: 'ad:find',
+  topUpApprove: new RegExp(`^ad:tuA:(${UUID})$`),
+  topUpReject: new RegExp(`^ad:tuR:(${UUID})$`),
   appealAccept: new RegExp(`^ad:apA:(${UUID})$`),
   appealReject: new RegExp(`^ad:apR:(${UUID})$`),
   wholesaleApprove: new RegExp(`^ad:whA:(${UUID})$`),
@@ -61,6 +65,7 @@ export class BotAdminPanelService {
     private readonly moderation: CustomerModerationService,
     private readonly wholesale: WholesaleService,
     private readonly notifications: NotificationDispatcher,
+    private readonly wallet: WalletService,
   ) {}
 
   isAdmin(telegramUserId: number): Promise<boolean> {
@@ -78,6 +83,22 @@ export class BotAdminPanelService {
     bot.callbackQuery(CB.proofs, (ctx) => this.guard(ctx, 'payments.proofs.read', () => this.resendProofs(ctx)));
     bot.callbackQuery(CB.appeals, (ctx) => this.guard(ctx, 'customers.read', () => this.listAppeals(ctx)));
     bot.callbackQuery(CB.wholesale, (ctx) => this.guard(ctx, 'customers.read', () => this.listWholesale(ctx)));
+    bot.callbackQuery(CB.topUps, (ctx) => this.guard(ctx, 'payments.proofs.read', () => this.resendTopUps(ctx)));
+    bot.callbackQuery(CB.topUpApprove, (ctx) =>
+      this.guard(ctx, 'payments.proofs.review', async (staffId) => {
+        const result = await this.wallet.review(ctx.match![1]!, staffId, { approve: true });
+        await this.markDone(ctx, `✅ اتقبل واتشحن الرصيد. رصيده دلوقتي ${result.balance}.`);
+      }),
+    );
+    bot.callbackQuery(CB.topUpReject, (ctx) =>
+      this.guard(ctx, 'payments.proofs.review', async (staffId) => {
+        await this.wallet.review(ctx.match![1]!, staffId, {
+          approve: false,
+          reason: 'التحويل موصلش أو مش مطابق للمبلغ',
+        });
+        await this.markDone(ctx, '❌ اترفض طلب الشحن.');
+      }),
+    );
     bot.callbackQuery(CB.find, (ctx) =>
       this.guard(ctx, 'customers.read', async () => {
         await this.setState(ctx, { step: 'find' });
@@ -149,15 +170,17 @@ export class BotAdminPanelService {
 
   /** The admin keyboard, under the welcome message for staff. */
   async showHome(ctx: Context, edit = false): Promise<void> {
-    const [proofs, appeals, wholesale] = await Promise.all([
+    const [proofs, appeals, wholesale, topUps] = await Promise.all([
       this.prisma.paymentProof.count({ where: { status: 'PENDING' } }),
       this.prisma.customerAppeal.count({ where: { status: 'PENDING' } }),
       this.prisma.wholesaleApplication.count({ where: { status: 'PENDING' } }),
+      this.prisma.walletTopUp.count({ where: { status: 'PENDING' } }),
     ]);
     const keyboard = new InlineKeyboard()
       .text('📊 إحصائيات اليوم', CB.stats)
       .row()
       .text(`🧾 إيصالات مستنية (${proofs})`, CB.proofs)
+      .text(`💳 شحن رصيد (${topUps})`, CB.topUps)
       .row()
       .text(`📝 التماسات (${appeals})`, CB.appeals)
       .text(`🏪 طلبات جملة (${wholesale})`, CB.wholesale)
@@ -278,6 +301,46 @@ export class BotAdminPanelService {
       ].join('\n'),
       { reply_markup: new InlineKeyboard().text('↩️ اللوحة', CB.home) },
     );
+  }
+
+  /** Re-sends pending top-up requests as review alerts, receipt and buttons included. */
+  private async resendTopUps(ctx: Context): Promise<void> {
+    const topUps = await this.prisma.walletTopUp.findMany({
+      where: { status: 'PENDING' },
+      orderBy: { createdAt: 'asc' },
+      take: MAX_LISTED,
+      select: { id: true },
+    });
+    if (topUps.length === 0) {
+      await ctx.reply('🎉 مفيش طلبات شحن مستنية.');
+      return;
+    }
+    for (const topUp of topUps) {
+      const alert = await this.renderer.render({ kind: 'wallet.topup_requested', audience: 'STAFF', topUpId: topUp.id, summary: '' });
+      if (alert) await this.sendAlert(ctx, alert);
+    }
+  }
+
+  private async sendAlert(ctx: Context, alert: NonNullable<Awaited<ReturnType<StaffAlertRenderer['render']>>>): Promise<void> {
+    if (!ctx.chat) return;
+    const keyboard = new InlineKeyboard();
+    alert.buttons.forEach((row, i) => {
+      if (i > 0) keyboard.row();
+      for (const button of row) {
+        if (button.callbackData) keyboard.text(button.text, button.callbackData);
+        else if (button.url) keyboard.url(button.text, button.url);
+      }
+    });
+    if (alert.file) {
+      const { InputFile } = await import('grammy');
+      const file = new InputFile(alert.file.buffer, alert.file.filename);
+      const options = { caption: alert.text, reply_markup: keyboard };
+      await (alert.file.asPhoto ? ctx.replyWithPhoto(file, options) : ctx.replyWithDocument(file, options)).catch(() =>
+        ctx.reply(alert.text, { reply_markup: keyboard }),
+      );
+    } else {
+      await ctx.reply(alert.text, { reply_markup: keyboard });
+    }
   }
 
   /** Re-sends the oldest pending proofs as normal review alerts, buttons and all. */

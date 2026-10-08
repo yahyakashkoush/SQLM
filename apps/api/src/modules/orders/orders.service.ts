@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { Prisma, type Order } from '@prisma/client';
 import { ConfigService } from '@nestjs/config';
 import { ORDER_STATUS_LABELS_AR, renderTemplate, type OrderStatus, type PaginatedResult } from '@sqlm/shared';
@@ -18,6 +18,8 @@ import { CouponsService } from '../coupons/coupons.service';
 import { LoyaltyService } from '../loyalty/loyalty.service';
 import { CartPricingService, bundleLabel } from './cart-pricing.service';
 import type { CheckoutDto, QuoteOrderDto } from './dto/checkout.dto';
+import { DeliveryDispatcher } from '../delivery/delivery-dispatcher.service';
+import { debitWallet } from '../wallet/wallet-ledger';
 import type { OrderQueryDto } from './dto/order-query.dto';
 
 type PrismaTx = Prisma.TransactionClient;
@@ -54,6 +56,7 @@ export class OrdersService {
     private readonly pricing: CartPricingService,
     private readonly coupons: CouponsService,
     private readonly loyalty: LoyaltyService,
+    private readonly delivery: DeliveryDispatcher,
   ) {}
 
   /**
@@ -74,11 +77,14 @@ export class OrdersService {
       return existing;
     }
 
-    const paymentMethod = await this.prisma.paymentMethod.findUnique({
-      where: { id: dto.paymentMethodId },
-    });
-    if (!paymentMethod || !paymentMethod.enabled) {
-      throw new PaymentMethodUnavailableError(dto.paymentMethodId);
+    // A merchant paying from the wallet needs no payment method: the order
+    // is settled inside the same transaction that creates it.
+    const payWithWallet = dto.payWithWallet === true;
+    const paymentMethod = payWithWallet
+      ? null
+      : await this.prisma.paymentMethod.findUnique({ where: { id: dto.paymentMethodId ?? '' } });
+    if (!payWithWallet && (!paymentMethod || !paymentMethod.enabled)) {
+      throw new PaymentMethodUnavailableError(dto.paymentMethodId ?? '');
     }
 
     const contact = await this.resolveFirstOrderContact(customerId, dto);
@@ -97,9 +103,11 @@ export class OrdersService {
       throw new OrderPriceChangedError(String(dto.expectedTotal), total.toString());
     }
 
+    if (payWithWallet) await this.assertWalletCanPay(customerId, currency);
+
     // Frozen onto the order with its rate, so the EGP amount an order asks
     // for never moves when the admin changes the rate later.
-    const conversion = await this.pricing.conversionFor(total, currency, paymentMethod);
+    const conversion = paymentMethod ? await this.pricing.conversionFor(total, currency, paymentMethod) : null;
 
     try {
       const order = await this.prisma.$transaction(async (tx) => {
@@ -117,7 +125,7 @@ export class OrdersService {
             payCurrency: conversion?.currency,
             payAmount: conversion?.amount,
             exchangeRate: conversion?.rate,
-            paymentMethodId: dto.paymentMethodId,
+            paymentMethodId: paymentMethod?.id ?? null,
             idempotencyKey: dto.idempotencyKey,
           },
         });
@@ -151,6 +159,7 @@ export class OrdersService {
               unitPrice: line.unitPrice,
               quantity: line.units,
               lineTotal: line.lineTotal,
+              unitCost: product.costPrice,
               bundleId: bundle?.id,
               bundleLabel: bundle ? bundleLabel(bundle) : undefined,
             },
@@ -174,12 +183,28 @@ export class OrdersService {
 
         await this.transition(tx, created.id, 'PENDING_PAYMENT', { type: 'CUSTOMER', customerId });
 
+        if (payWithWallet) {
+          // Not enough balance throws here and the whole order rolls back:
+          // no reservation, no coupon burned, nothing to clean up.
+          await debitWallet(tx, {
+            customerId,
+            amount: total,
+            currency,
+            type: 'PURCHASE',
+            orderId: created.id,
+            note: `طلب #${created.sequenceNumber}`,
+          });
+          await this.settleFromWallet(tx, created.id, customerId);
+        }
+
         return tx.order.findUniqueOrThrow({ where: { id: created.id }, include: { items: true } });
       });
 
       this.logger.log(`Checkout created order ${order.id} for customer ${customerId}`);
 
-      if (paymentMethod.provider !== 'MANUAL') {
+      if (payWithWallet) {
+        await this.delivery.dispatch(order.id);
+      } else if (paymentMethod && paymentMethod.provider !== 'MANUAL') {
         // Best-effort: the order is already committed, so a hiccup here
         // must not fail the checkout the customer just completed. The
         // payment page opens the watch on demand if this didn't.
@@ -195,7 +220,7 @@ export class OrdersService {
       await this.notifications.notifyStaff({
         kind: 'order.created',
         orderId: order.id,
-        summary: `New order #${order.sequenceNumber} — ${order.total} ${order.currency}`,
+        summary: `New order #${order.sequenceNumber} — ${order.total} ${order.currency}${payWithWallet ? ' · paid from wallet' : ''}`,
       });
       return order;
     } catch (err) {
@@ -211,6 +236,36 @@ export class OrdersService {
         if (winner) return winner;
       }
       throw err;
+    }
+  }
+
+  /**
+   * Marks an order paid from the wallet. The caller has already debited the
+   * balance in this same transaction. Walks SUBMITTED → REVIEW → PAID like
+   * every other payment: the state machine has no shortcut to PAID.
+   */
+  async settleFromWallet(tx: PrismaTx, orderId: string, customerId: string): Promise<void> {
+    await tx.order.update({ where: { id: orderId }, data: { walletPaid: true } });
+    const note = 'دفع من رصيد المحفظة';
+    await this.transition(tx, orderId, 'PAYMENT_SUBMITTED', { type: 'CUSTOMER', customerId }, note);
+    await this.transition(tx, orderId, 'PAYMENT_REVIEW', { type: 'SYSTEM' }, note);
+    await this.transition(tx, orderId, 'PAID', { type: 'SYSTEM' }, note);
+  }
+
+  /** Wallet checkout is for approved merchants, in the wallet's currency. */
+  private async assertWalletCanPay(customerId: string, orderCurrency: string): Promise<void> {
+    const [customer, walletCurrency] = await Promise.all([
+      this.prisma.customer.findUniqueOrThrow({ where: { id: customerId }, select: { wholesaleAt: true } }),
+      this.settings.getString('store.defaultCurrency'),
+    ]);
+    if (!customer.wholesaleAt) {
+      throw new ForbiddenException({ code: 'WALLET_MERCHANTS_ONLY', message: 'المحفظة لتجار الجملة المعتمدين بس.' });
+    }
+    if (orderCurrency !== walletCurrency) {
+      throw new ConflictException({
+        code: 'WALLET_CURRENCY_MISMATCH',
+        message: `الرصيد بالـ ${walletCurrency} والطلب بالـ ${orderCurrency} — مينفعش يتدفع من الرصيد.`,
+      });
     }
   }
 
@@ -547,7 +602,8 @@ export class OrdersService {
     const [items, total] = await this.prisma.$transaction([
       this.prisma.order.findMany({
         where,
-        include: { items: true },
+        // The product's slug and image let the app link a past purchase back to its page ("buy again").
+        include: { items: { include: { product: { select: { slug: true, images: true, status: true, visibility: true } } } } },
         orderBy: { createdAt: 'desc' },
         skip: (page - 1) * pageSize,
         take: pageSize,

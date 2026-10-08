@@ -202,7 +202,15 @@ export class AdminService {
               { firstName: { contains: search, mode: 'insensitive' } },
               { lastName: { contains: search, mode: 'insensitive' } },
               { telegramUsername: { contains: search, mode: 'insensitive' } },
-              ...(/\d{4,}/.test(search) ? [{ phone: { contains: search.replace(/\D/g, '').replace(/^0/, '') } }] : []),
+              { fullName: { contains: search, mode: 'insensitive' } },
+              ...(/\d{4,}/.test(search)
+                ? [
+                    { phone: { contains: search.replace(/\D/g, '').replace(/^0/, '') } },
+                    { contactPhone: { contains: search.replace(/\D/g, '').replace(/^0/, '') } },
+                  ]
+                : []),
+              // A Telegram id pasted from a message or a log.
+              ...(/^\d{5,15}$/.test(search) ? [{ telegramId: BigInt(search) }] : []),
             ],
           }
         : {}),

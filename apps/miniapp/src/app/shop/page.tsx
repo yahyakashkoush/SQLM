@@ -1,6 +1,8 @@
 'use client';
 
 import Link from 'next/link';
+import { useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { ChevronLeft, Search } from 'lucide-react';
 import { Skeleton } from '@sqlm/ui';
 import { useCategories, useProducts, useStoreInfo } from '@/lib/queries';
@@ -9,6 +11,8 @@ import { useAuthStore } from '@/store/auth-store';
 import { ProductCard } from '@/components/products/product-card';
 import { CartButton } from '@/components/cart/cart-button';
 import { PerksBanner } from '@/components/account/perks-banner';
+import { RolePanel } from '@/components/home/role-panel';
+import { BuyAgain } from '@/components/home/buy-again';
 
 export default function ShopPage() {
   const { authError, inTelegram } = useTelegram();
@@ -17,6 +21,8 @@ export default function ShopPage() {
   const categories = useCategories();
   const featured = useProducts({ featured: true });
   const latest = useProducts({});
+  const router = useRouter();
+  const [search, setSearch] = useState('');
 
   return (
     <main className="flex flex-col gap-6 p-4">
@@ -25,15 +31,31 @@ export default function ShopPage() {
           <p className="text-sm text-muted-foreground">أهلاً{customer?.firstName ? ` ${customer.firstName}` : ''} 👋</p>
           <h1 className="text-xl font-semibold">{store.data?.name ?? 'المتجر'}</h1>
         </div>
-        <div className="flex items-center gap-2">
-          <Link href="/products" className="rounded-full border p-2" aria-label="بحث">
-            <Search className="h-5 w-5" />
-          </Link>
-          <CartButton />
-        </div>
+        <CartButton />
       </header>
 
+      <form
+        role="search"
+        onSubmit={(e) => {
+          e.preventDefault();
+          const q = search.trim();
+          router.push(q ? `/products?search=${encodeURIComponent(q)}` : '/products');
+        }}
+        className="relative -mt-2"
+      >
+        <Search className="pointer-events-none absolute start-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+        <input
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="دوّر على اشتراك… ChatGPT، Canva، Netflix"
+          className="h-11 w-full rounded-xl border bg-muted/40 pe-3 ps-9 text-sm outline-none focus:border-primary focus:bg-background"
+          enterKeyHint="search"
+        />
+      </form>
+
+      <RolePanel />
       <PerksBanner compact />
+      <BuyAgain />
 
       {!inTelegram && (
         <p className="rounded-md border border-warning/50 bg-warning/10 p-3 text-xs">

@@ -187,7 +187,10 @@ function MemberCatalog({ since }: { since: string | null }) {
           <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0 text-success" />
           <div>
             <p className="font-medium">انت عضو جملة{since ? ` من ${formatDate(since)}` : ''}</p>
-            <p className="text-muted-foreground">أسعار الجملة بتظهرلك على صفحة كل منتج تحت «اختار الكمية».</p>
+            <p className="text-muted-foreground">أسعار الجملة بتظهرلك على صفحة كل منتج تحت «اختار الكمية»، وتقدر تدفع من رصيد المحفظة على طول.</p>
+            <Link href="/wallet" className="mt-1 inline-block text-xs font-medium text-primary underline">
+              المحفظة والرصيد ←
+            </Link>
           </div>
         </CardContent>
       </Card>
@@ -206,13 +209,20 @@ function MemberCatalog({ since }: { since: string | null }) {
                     // eslint-disable-next-line @next/next/no-img-element -- admin-configured storage host
                     <img src={p.images[0]} alt="" className="h-12 w-12 shrink-0 rounded-md object-cover" />
                   )}
-                  <div className="min-w-0 flex-1">
+                  <div className="min-w-0 flex-1 space-y-1">
                     <p className="truncate text-sm font-medium">{p.name}</p>
-                    <p className="text-xs text-muted-foreground">
-                      {p.bundles
-                        .map((b) => `${b.quantity} قطعة ${formatMoney(b.price, p.currency)}`)
-                        .join(' · ')}
-                    </p>
+                    {p.bundles.map((b) => {
+                      const each = Number(b.price) / b.quantity;
+                      const saving = Number(p.price) > 0 ? Math.round((1 - each / Number(p.price)) * 100) : 0;
+                      return (
+                        <p key={b.id} className="flex flex-wrap items-center gap-x-2 text-xs">
+                          <span className="font-semibold">{b.quantity} قطعة</span>
+                          <span className="tabular-nums">{formatMoney(b.price, p.currency)}</span>
+                          <span className="text-muted-foreground">({formatMoney(each.toFixed(2), p.currency)} للقطعة)</span>
+                          {saving > 0 && <span className="rounded bg-success/15 px-1.5 text-[10px] font-semibold text-success">وفّر {saving}%</span>}
+                        </p>
+                      );
+                    })}
                   </div>
                 </CardContent>
               </Card>
@@ -230,6 +240,8 @@ type CatalogItem = {
   name: string;
   images: string[];
   currency: string;
+  /** Retail price of one unit, to show what the wholesale price saves. */
+  price: string;
   bundles: Array<{ id: string; quantity: number; price: string }>;
 };
 

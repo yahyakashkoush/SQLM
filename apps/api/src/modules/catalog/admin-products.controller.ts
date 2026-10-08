@@ -1,8 +1,9 @@
 import { ConfigService } from '@nestjs/config';
-import { Body, Controller, Delete, Get, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, ParseUUIDPipe, Patch, Post, Query, UseGuards } from '@nestjs/common';
 import { ProductsService } from './products.service';
 import { CreateProductDto } from './dto/create-product.dto';
 import { UpdateProductDto } from './dto/update-product.dto';
+import { CreateBundleDto, UpdateBundleDto } from './dto/bundle.dto';
 import { AdminProductQueryDto } from './dto/product-query.dto';
 import { JwtStaffAuthGuard } from '../rbac/guards/jwt-staff-auth.guard';
 import { PermissionsGuard } from '../rbac/guards/permissions.guard';
@@ -48,6 +49,59 @@ export class AdminProductsController {
     const product = await this.products.update(id, dto);
     const notified = dto.notifyCustomers ? await this.announce(product) : 0;
     return { ...product, notified };
+  }
+
+  @Get(':id/bundles')
+  @Permissions('products.read')
+  bundles(@Param('id', ParseUUIDPipe) id: string) {
+    return this.products.listBundles(id);
+  }
+
+  @Post(':id/bundles')
+  @Permissions('products.write')
+  async addBundle(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: CreateBundleDto,
+    @CurrentStaff() staff: AuthenticatedStaff,
+  ) {
+    const result = await this.products.addBundle(id, dto);
+    await this.auditBundle(staff, 'product.bundle_added', id, { bundleId: result.bundle.id, ...dto });
+    return result;
+  }
+
+  @Patch(':id/bundles/:bundleId')
+  @Permissions('products.write')
+  async updateBundle(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('bundleId', ParseUUIDPipe) bundleId: string,
+    @Body() dto: UpdateBundleDto,
+    @CurrentStaff() staff: AuthenticatedStaff,
+  ) {
+    const result = await this.products.updateBundle(id, bundleId, dto);
+    await this.auditBundle(staff, 'product.bundle_updated', id, { bundleId, ...dto });
+    return result;
+  }
+
+  @Delete(':id/bundles/:bundleId')
+  @Permissions('products.write')
+  async deleteBundle(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('bundleId', ParseUUIDPipe) bundleId: string,
+    @CurrentStaff() staff: AuthenticatedStaff,
+  ) {
+    const result = await this.products.deleteBundle(id, bundleId);
+    await this.auditBundle(staff, 'product.bundle_deleted', id, { bundleId });
+    return result;
+  }
+
+  private auditBundle(staff: AuthenticatedStaff, action: string, productId: string, changes: object) {
+    return this.audit.log({
+      actorStaffId: staff.id,
+      action,
+      entityType: 'product',
+      entityId: productId,
+      changes: JSON.parse(JSON.stringify(changes)),
+    });
   }
 
   @Delete(':id')

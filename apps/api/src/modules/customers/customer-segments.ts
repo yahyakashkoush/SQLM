@@ -24,6 +24,8 @@ export function segmentWhere(segment: CustomerSegment = 'ALL', now = new Date())
       return { ...active, orders: { some: PAID } };
     case 'NON_BUYERS':
       return { ...active, orders: { none: PAID } };
+    case 'WHOLESALE':
+      return { ...active, wholesaleAt: { not: null } };
     case 'DORMANT': {
       const since = new Date(now.getTime() - DORMANT_AFTER_DAYS * 24 * 60 * 60 * 1000);
       return {

@@ -56,6 +56,54 @@ export interface AccountProfile {
   wholesale: boolean;
   firstName: string | null;
   memberSince: string;
+  /** Merchants only: their prepaid balance. */
+  wallet: { balance: string; currency: string } | null;
+  /** This Telegram account is staff — the app shows its admin mode. */
+  staff: { role: string; name: string } | null;
+}
+
+export type WalletEntryType = 'TOPUP' | 'PURCHASE' | 'REFUND' | 'ADJUSTMENT';
+
+export interface WalletSummary {
+  enabled: boolean;
+  balance: string;
+  currency: string;
+  pendingTopUps: Array<{ id: string; amount: string; currency: string; payAmount: string | null; payCurrency: string | null; createdAt: string }>;
+  entries: Array<{
+    id: string;
+    type: WalletEntryType;
+    amount: string;
+    balanceAfter: string;
+    currency: string;
+    note: string | null;
+    createdAt: string;
+    order: { id: string; sequenceNumber: number } | null;
+  }>;
+}
+
+export interface WalletTopUpRow {
+  id: string;
+  amount: string;
+  currency: string;
+  payAmount: string | null;
+  payCurrency: string | null;
+  status: 'PENDING' | 'APPROVED' | 'REJECTED';
+  rejectReason: string | null;
+  createdAt: string;
+  reviewedAt: string | null;
+  paymentMethod: { name: string } | null;
+}
+
+export interface TopUpMethod {
+  id: string;
+  name: string;
+  description: string | null;
+  accountNumber: string | null;
+  instructions: string | null;
+  qrCodeUrl: string | null;
+  currency: string;
+  payAmount: string;
+  payCurrency: string;
 }
 
 export interface WholesaleStatus {
@@ -134,7 +182,7 @@ export interface OrderItem {
   quantity: number;
   lineTotal?: string | null;
   bundleLabel?: string | null;
-  product?: { slug: string; images: string[] };
+  product?: { slug: string; images: string[]; status?: string; visibility?: string };
 }
 
 export interface Order {
@@ -156,6 +204,8 @@ export interface Order {
   payAmount: string | null;
   exchangeRate: string | null;
   paymentMethodId: string | null;
+  /** Settled from the merchant's wallet balance. */
+  walletPaid?: boolean;
   createdAt: string;
   items: OrderItem[];
   paymentMethod?: PaymentMethod | null;

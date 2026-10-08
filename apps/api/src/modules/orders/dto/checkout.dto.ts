@@ -3,6 +3,7 @@ import {
   ArrayMaxSize,
   ArrayMinSize,
   IsArray,
+  IsBoolean,
   IsInt,
   IsNumber,
   IsOptional,
@@ -12,6 +13,7 @@ import {
   MaxLength,
   Min,
   MinLength,
+  ValidateIf,
   ValidateNested,
 } from 'class-validator';
 
@@ -39,8 +41,15 @@ export class CheckoutDto {
   @Type(() => CheckoutItemDto)
   items!: CheckoutItemDto[];
 
+  /** Required unless the merchant pays from the wallet. */
+  @ValidateIf((o: CheckoutDto) => o.payWithWallet !== true)
   @IsUUID()
-  paymentMethodId!: string;
+  paymentMethodId?: string;
+
+  /** Approved merchants: settle the order from the wallet balance at once. */
+  @IsOptional()
+  @IsBoolean()
+  payWithWallet?: boolean;
 
   /** Client-generated (e.g. persisted per-cart in the Mini App). Retried checkout with the same key returns the original order. */
   @MinLength(8)
